@@ -107,6 +107,14 @@ final class ImportService {
             songRepository.add(song)
             songs.append(song)
 
+            Task {
+                await MetadataEnrichmentService.shared.enrich(
+                    songID: song.id,
+                    repository: songRepository,
+                    reason: .importFile
+                )
+            }
+
             importedCount = index + 1
             importProgress = Double(index + 1) / Double(urls.count)
         }

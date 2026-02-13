@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackService.self) private var playbackService
     @State private var viewModel = NowPlayingViewModel()
     @State private var isDragging = false
@@ -245,6 +246,22 @@ struct NowPlayingView: View {
                 viewModel.showEqualizer = true
             } label: {
                 Image(systemName: "slider.vertical.3")
+                    .foregroundColor(.secondary)
+            }
+
+            // Metadata Enrich
+            Button {
+                guard let song = playbackService.currentSong else { return }
+                let repo = SongRepository(modelContext: modelContext)
+                Task {
+                    await MetadataEnrichmentService.shared.enrich(
+                        songID: song.id,
+                        repository: repo,
+                        reason: .manual
+                    )
+                }
+            } label: {
+                Image(systemName: "wand.and.stars")
                     .foregroundColor(.secondary)
             }
 

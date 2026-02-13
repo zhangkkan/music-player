@@ -48,6 +48,14 @@ final class SongRepository {
         return (try? modelContext.fetch(descriptor)) ?? []
     }
 
+    func fetchById(_ id: UUID) -> Song? {
+        let songID = id
+        let descriptor = FetchDescriptor<Song>(
+            predicate: #Predicate<Song> { $0.id == songID }
+        )
+        return (try? modelContext.fetch(descriptor))?.first
+    }
+
     func allArtists() -> [String] {
         let songs = fetchAll()
         return Array(Set(songs.map(\.artist))).sorted()
@@ -82,6 +90,12 @@ final class SongRepository {
 
     func add(_ song: Song) {
         modelContext.insert(song)
+        save()
+    }
+
+    func update(songID: UUID, _ block: (Song) -> Void) {
+        guard let song = fetchById(songID) else { return }
+        block(song)
         save()
     }
 

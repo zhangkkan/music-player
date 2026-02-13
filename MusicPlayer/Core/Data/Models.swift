@@ -19,6 +19,9 @@ final class Song {
     var lastPlayedAt: Date?
     @Attribute(.externalStorage) var artworkData: Data?
     @Attribute(.externalStorage) var fileBookmark: Data?
+    var lastEnrichedAt: Date?
+    var metadataSource: String?
+    var artworkURL: String?
     var lyricsPath: String?
     var addedAt: Date
 
@@ -42,6 +45,9 @@ final class Song {
         lastPlayedAt: Date? = nil,
         artworkData: Data? = nil,
         fileBookmark: Data? = nil,
+        lastEnrichedAt: Date? = nil,
+        metadataSource: String? = nil,
+        artworkURL: String? = nil,
         lyricsPath: String? = nil,
         addedAt: Date = Date()
     ) {
@@ -61,6 +67,9 @@ final class Song {
         self.lastPlayedAt = lastPlayedAt
         self.artworkData = artworkData
         self.fileBookmark = fileBookmark
+        self.lastEnrichedAt = lastEnrichedAt
+        self.metadataSource = metadataSource
+        self.artworkURL = artworkURL
         self.lyricsPath = lyricsPath
         self.addedAt = addedAt
     }

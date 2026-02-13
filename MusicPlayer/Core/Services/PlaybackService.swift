@@ -189,6 +189,16 @@ final class PlaybackService {
                 await MainActor.run {
                     self.nowPlayingService?.update()
                 }
+                if let container = self.modelContainer {
+                    let repo = SongRepository(modelContext: ModelContext(container))
+                    Task {
+                        await MetadataEnrichmentService.shared.enrich(
+                            songID: song.id,
+                            repository: repo,
+                            reason: .playback
+                        )
+                    }
+                }
             } catch {
                 print("Playback error: \(error)")
                 if isFileMissing(error) {
