@@ -34,6 +34,7 @@ final class PlaybackService {
     var playQueue: [Song] = []
     var currentIndex: Int = 0
     var playbackMode: PlaybackMode = .sequential
+    var missingFileMessage: String?
 
     var isPlaying: Bool { audioEngine.isPlaying }
     var currentTime: TimeInterval { audioEngine.currentTime }
@@ -41,6 +42,7 @@ final class PlaybackService {
 
     private var nowPlayingService: NowPlayingService?
     private var remoteCommandService: RemoteCommandService?
+    private var securityScopedURL: URL?
 
     private init() {
         equalizer.bind(to: audioEngine.eqNode)
@@ -160,6 +162,7 @@ final class PlaybackService {
     func stop() {
         audioEngine.stop()
         currentSong = nil
+        stopSecurityScopedAccess()
         nowPlayingService?.clear()
     }
 
@@ -167,12 +170,13 @@ final class PlaybackService {
 
     private func startPlayback(_ song: Song) {
         currentSong = song
+        stopSecurityScopedAccess()
 
         // Increment play count
         song.playCount += 1
         song.lastPlayedAt = Date()
 
-        let url = URL(fileURLWithPath: song.fileURL)
+        let url = resolvedURL(for: song)
 
         Task {
             do {
@@ -187,8 +191,14 @@ final class PlaybackService {
                 }
             } catch {
                 print("Playback error: \(error)")
-                // Try next song on failure
-                handleSongCompletion()
+                if isFileMissing(error) {
+                    await MainActor.run {
+                        self.handleMissingFile(song)
+                    }
+                } else {
+                    // Try next song on failure
+                    handleSongCompletion()
+                }
             }
         }
     }
@@ -212,5 +222,66 @@ final class PlaybackService {
         case .shuffle:
             playNext()
         }
+    }
+
+    private func resolvedURL(for song: Song) -> URL {
+        let url = URL(fileURLWithPath: song.fileURL)
+        if let bookmark = song.fileBookmark {
+            var isStale = false
+            if let scopedURL = try? URL(resolvingBookmarkData: bookmark,
+                                        options: [.withoutUI],
+                                        relativeTo: nil,
+                                        bookmarkDataIsStale: &isStale) {
+                securityScopedURL = scopedURL
+                _ = scopedURL.startAccessingSecurityScopedResource()
+                return scopedURL
+            }
+        }
+        return url
+    }
+
+    private func stopSecurityScopedAccess() {
+        if let scopedURL = securityScopedURL {
+            scopedURL.stopAccessingSecurityScopedResource()
+            securityScopedURL = nil
+        }
+    }
+
+    private func isFileMissing(_ error: Error) -> Bool {
+        if let audioError = error as? AudioEngineError, audioError == .fileNotFound {
+            return true
+        }
+        if let decoderError = error as? FFmpegDecoder.DecoderError, decoderError == .fileNotFound {
+            return true
+        }
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileNoSuchFileError
+    }
+
+    private func handleMissingFile(_ song: Song) {
+        missingFileMessage = "文件已失效或无法访问，请重新导入。"
+        if let index = playQueue.firstIndex(where: { $0.id == song.id }) {
+            playQueue.remove(at: index)
+            if currentIndex >= playQueue.count {
+                currentIndex = max(0, playQueue.count - 1)
+            }
+        }
+        if currentSong?.id == song.id {
+            stop()
+        }
+        deleteSongRecord(song)
+    }
+
+    private func deleteSongRecord(_ song: Song) {
+        guard let container = modelContainer else { return }
+        let context = ModelContext(container)
+        let songID = song.id
+        let descriptor = FetchDescriptor<Song>(predicate: #Predicate { $0.id == songID })
+        if let existing = try? context.fetch(descriptor).first {
+            context.delete(existing)
+        } else {
+            context.delete(song)
+        }
+        try? context.save()
     }
 }

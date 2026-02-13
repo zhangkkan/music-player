@@ -1,7 +1,7 @@
 import AVFoundation
 import Combine
 
-enum AudioEngineError: Error {
+enum AudioEngineError: Error, Equatable {
     case fileNotFound
     case unsupportedFormat
     case engineSetupFailed
@@ -29,6 +29,7 @@ final class AudioEngine {
 
     private var visualizationHandler: (([Float]) -> Void)?
     private var completionHandler: (() -> Void)?
+    private var playbackToken: Int = 0
 
     // Buffer scheduling for decoded audio (FLAC etc.)
     private var pcmBuffers: [AVAudioPCMBuffer] = []
@@ -45,7 +46,7 @@ final class AudioEngine {
     private func setupAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            try session.setCategory(.playback, mode: .default, options: [.allowBluetooth, .allowAirPlay])
+            try session.setCategory(.playback, mode: .default, options: [.allowBluetoothA2DP, .allowAirPlay])
             try session.setActive(true)
         } catch {
             print("Audio session setup failed: \(error)")
@@ -86,11 +87,28 @@ final class AudioEngine {
         }
     }
 
+    private func reconfigureEngine(with format: AVAudioFormat) {
+        if engine.isRunning {
+            engine.stop()
+        }
+        engine.disconnectNodeOutput(playerNode)
+        engine.disconnectNodeOutput(eqNode)
+        engine.disconnectNodeOutput(mixerNode)
+        engine.connect(playerNode, to: eqNode, format: format)
+        engine.connect(eqNode, to: mixerNode, format: format)
+        engine.connect(mixerNode, to: engine.outputNode, format: format)
+        engine.prepare()
+    }
+
     // MARK: - Play AVAudioFile (native formats: MP3, AAC, ALAC, WAV)
 
     func play(url: URL) throws {
         stop()
         isBufferMode = false
+
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw AudioEngineError.fileNotFound
+        }
 
         let file = try AVAudioFile(forReading: url)
         audioFile = file
@@ -100,20 +118,17 @@ final class AudioEngine {
         duration = Double(audioLengthFrames) / audioSampleRate
 
         // Reconnect with correct format
-        engine.disconnectNodeOutput(playerNode)
-        engine.disconnectNodeOutput(eqNode)
-        engine.disconnectNodeOutput(mixerNode)
-        engine.connect(playerNode, to: eqNode, format: file.processingFormat)
-        engine.connect(eqNode, to: mixerNode, format: file.processingFormat)
-        engine.connect(mixerNode, to: engine.outputNode, format: file.processingFormat)
+        reconfigureEngine(with: file.processingFormat)
 
         if !engine.isRunning {
             try engine.start()
         }
 
+        let token = nextPlaybackToken()
         playerNode.scheduleFile(file, at: nil) { [weak self] in
             DispatchQueue.main.async {
-                self?.handlePlaybackCompletion()
+                guard let self = self, self.playbackToken == token else { return }
+                self.handlePlaybackCompletion()
             }
         }
         playerNode.play()
@@ -136,24 +151,20 @@ final class AudioEngine {
         duration = Double(totalFrames) / format.sampleRate
 
         // Reconnect with correct format
-        engine.disconnectNodeOutput(playerNode)
-        engine.disconnectNodeOutput(eqNode)
-        engine.disconnectNodeOutput(mixerNode)
-        engine.connect(playerNode, to: eqNode, format: format)
-        engine.connect(eqNode, to: mixerNode, format: format)
-        engine.connect(mixerNode, to: engine.outputNode, format: format)
+        reconfigureEngine(with: format)
 
         if !engine.isRunning {
             try engine.start()
         }
 
-        scheduleNextBuffers()
+        let token = nextPlaybackToken()
+        scheduleNextBuffers(token: token)
         playerNode.play()
         isPlaying = true
         startTimeTracking()
     }
 
-    private func scheduleNextBuffers() {
+    private func scheduleNextBuffers(token: Int) {
         let buffersToSchedule = min(3, pcmBuffers.count - currentBufferIndex)
         guard buffersToSchedule > 0 else { return }
 
@@ -163,7 +174,7 @@ final class AudioEngine {
             let isLast = index == pcmBuffers.count - 1
 
             playerNode.scheduleBuffer(pcmBuffers[index]) { [weak self] in
-                guard let self = self else { return }
+                guard let self = self, self.playbackToken == token else { return }
                 if isLast {
                     DispatchQueue.main.async {
                         self.handlePlaybackCompletion()
@@ -215,10 +226,17 @@ final class AudioEngine {
 
         let remainingFrames = AVAudioFrameCount(audioLengthFrames - clampedFrame)
         guard remainingFrames > 0 else {
-            handlePlaybackCompletion()
+            seekFrame = audioLengthFrames
+            currentTime = duration
+            if isPlaying {
+                playerNode.stop()
+                isPlaying = false
+                stopTimeTracking()
+            }
             return
         }
 
+        let token = nextPlaybackToken()
         playerNode.scheduleSegment(
             file,
             startingFrame: clampedFrame,
@@ -226,7 +244,8 @@ final class AudioEngine {
             at: nil
         ) { [weak self] in
             DispatchQueue.main.async {
-                self?.handlePlaybackCompletion()
+                guard let self = self, self.playbackToken == token else { return }
+                self.handlePlaybackCompletion()
             }
         }
 
@@ -289,6 +308,11 @@ final class AudioEngine {
         guard isPlaying, let nodeTime = playerNode.lastRenderTime,
               let playerTime = playerNode.playerTime(forNodeTime: nodeTime) else { return }
         currentTime = Double(seekFrame + playerTime.sampleTime) / audioSampleRate
+    }
+
+    private func nextPlaybackToken() -> Int {
+        playbackToken += 1
+        return playbackToken
     }
 
     // MARK: - Interruption Handling

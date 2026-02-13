@@ -4,7 +4,7 @@ import Foundation
 /// Decodes non-native audio formats (FLAC, etc.) to PCM buffers using FFmpeg CLI.
 /// Falls back to AVAudioFile for natively supported formats.
 final class FFmpegDecoder {
-    enum DecoderError: Error, LocalizedError {
+    enum DecoderError: Error, LocalizedError, Equatable {
         case fileNotFound
         case decodingFailed(String)
         case unsupportedFormat
