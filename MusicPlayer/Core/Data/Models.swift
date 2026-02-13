@@ -22,6 +22,8 @@ final class Song {
     var lastEnrichedAt: Date?
     var metadataSource: String?
     var artworkURL: String?
+    var lastLyricsFetchedAt: Date?
+    var lyricsSource: String?
     var lyricsPath: String?
     var addedAt: Date
 
@@ -48,6 +50,8 @@ final class Song {
         lastEnrichedAt: Date? = nil,
         metadataSource: String? = nil,
         artworkURL: String? = nil,
+        lastLyricsFetchedAt: Date? = nil,
+        lyricsSource: String? = nil,
         lyricsPath: String? = nil,
         addedAt: Date = Date()
     ) {
@@ -70,6 +74,8 @@ final class Song {
         self.lastEnrichedAt = lastEnrichedAt
         self.metadataSource = metadataSource
         self.artworkURL = artworkURL
+        self.lastLyricsFetchedAt = lastLyricsFetchedAt
+        self.lyricsSource = lyricsSource
         self.lyricsPath = lyricsPath
         self.addedAt = addedAt
     }

@@ -5,13 +5,14 @@ enum EnrichReason {
     case importFile
     case playback
     case manual
+    case force
 }
 
 actor MetadataEnrichmentService {
     static let shared = MetadataEnrichmentService()
 
     private var inFlight: [UUID: Task<Void, Never>] = [:]
-    private let cacheInterval: TimeInterval = 24 * 60 * 60
+    private var lastMBRequestAt: Date?
 
     private init() {}
 
@@ -33,11 +34,16 @@ actor MetadataEnrichmentService {
     private func enrichInternal(songID: UUID, repository: SongRepository, reason: EnrichReason) async {
         let song = await MainActor.run { repository.fetchById(songID) }
         guard let song else { return }
-        guard shouldEnrich(song, reason: reason) else { return }
+        if !shouldEnrich(song, reason: reason) {
+            print("[Enrich] Skip for \(songID) (cache or not needed)")
+            return
+        }
 
         let query = Self.buildQuery(title: song.title, artist: song.artist, fileURL: song.fileURL)
 
+        print("[Enrich] Start for \(songID) - \(query.artist ?? "Unknown") / \(query.title)")
         if let itunes = await fetchFromiTunes(query: query) {
+            print("[Enrich] iTunes hit for \(songID)")
             await applyEnrichedData(
                 songID: songID,
                 repository: repository,
@@ -45,12 +51,14 @@ actor MetadataEnrichmentService {
                 title: itunes.title,
                 artist: itunes.artist,
                 album: itunes.album,
-                artworkURL: itunes.artworkURL
+                artworkURL: itunes.artworkURL,
+                reason: reason
             )
             return
         }
 
         if let mb = await fetchFromMusicBrainz(title: query.title, artist: query.artist) {
+            print("[Enrich] MusicBrainz hit for \(songID)")
             await applyEnrichedData(
                 songID: songID,
                 repository: repository,
@@ -58,13 +66,16 @@ actor MetadataEnrichmentService {
                 title: mb.title,
                 artist: mb.artist,
                 album: mb.album,
-                artworkURL: nil
+                artworkURL: nil,
+                reason: reason
             )
+        } else {
+            print("[Enrich] No results for \(songID)")
         }
     }
 
     private func shouldEnrich(_ song: Song, reason: EnrichReason) -> Bool {
-        if reason == .manual { return true }
+        if reason == .manual || reason == .force { return true }
 
         let needsInfo = Self.isMissing(song.title, fileURL: song.fileURL) ||
             Self.isUnknown(song.artist) ||
@@ -73,7 +84,7 @@ actor MetadataEnrichmentService {
 
         if !needsInfo { return false }
 
-        if let last = song.lastEnrichedAt, Date().timeIntervalSince(last) < cacheInterval {
+        if let last = song.lastEnrichedAt, Date().timeIntervalSince(last) < EnrichmentSettings.cacheInterval {
             return false
         }
 
@@ -109,6 +120,67 @@ actor MetadataEnrichmentService {
         return (cleanedTitle, cleanedArtist)
     }
 
+    nonisolated private static func shouldOverwrite(
+        current: String,
+        candidate: String,
+        fileURL: String?,
+        reason: EnrichReason
+    ) -> Bool {
+        if reason == .manual || reason == .force { return true }
+
+        if let fileURL = fileURL, Self.isMissing(current, fileURL: fileURL) {
+            return true
+        }
+
+        if Self.isUnknown(current) {
+            return true
+        }
+
+        let score = similarityScore(current, candidate)
+        return score >= EnrichmentSettings.correctionThreshold
+    }
+
+    nonisolated private static func similarityScore(_ a: String, _ b: String) -> Double {
+        let left = normalize(a)
+        let right = normalize(b)
+        if left.isEmpty || right.isEmpty { return 0 }
+        if left == right { return 1 }
+        let distance = levenshtein(left, right)
+        let maxLen = max(left.count, right.count)
+        if maxLen == 0 { return 1 }
+        return 1.0 - (Double(distance) / Double(maxLen))
+    }
+
+    nonisolated private static func normalize(_ value: String) -> String {
+        let lowered = value.lowercased()
+        let removedBrackets = lowered.replacingOccurrences(of: #"\(.*?\)|\[.*?\]|\{.*?\}"#, with: "", options: .regularExpression)
+        let removedFeat = removedBrackets.replacingOccurrences(of: "feat.", with: "", options: .caseInsensitive)
+        let removedSymbols = removedFeat.replacingOccurrences(of: #"[^a-z0-9\u4e00-\u9fa5]+"#, with: " ", options: .regularExpression)
+        return removedSymbols.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "  ", with: " ")
+    }
+
+    nonisolated private static func levenshtein(_ a: String, _ b: String) -> Int {
+        let aChars = Array(a)
+        let bChars = Array(b)
+        var costs = Array(0...bChars.count)
+
+        for i in 1...aChars.count {
+            costs[0] = i
+            var prev = i - 1
+            for j in 1...bChars.count {
+                let temp = costs[j]
+                if aChars[i - 1] == bChars[j - 1] {
+                    costs[j] = prev
+                } else {
+                    costs[j] = min(prev, costs[j - 1], costs[j]) + 1
+                }
+                prev = temp
+            }
+        }
+        return costs[bChars.count]
+    }
+
     private func applyEnrichedData(
         songID: UUID,
         repository: SongRepository,
@@ -116,28 +188,35 @@ actor MetadataEnrichmentService {
         title: String?,
         artist: String?,
         album: String?,
-        artworkURL: String?
+        artworkURL: String?,
+        reason: EnrichReason
     ) async {
         let downloadedArtwork = await fetchArtworkData(from: artworkURL)
         await MainActor.run {
             repository.update(songID: songID) { song in
                 let base = Self.fileBaseName(song.fileURL)
-                if let title = title, Self.isMissing(song.title, fileURL: song.fileURL) {
+                var updatedFields: [String] = []
+                if let title = title, Self.shouldOverwrite(current: song.title, candidate: title, fileURL: song.fileURL, reason: reason) {
                     song.title = title
+                    updatedFields.append("title")
                 } else if Self.isMissing(song.title, fileURL: song.fileURL) && !base.isEmpty {
                     song.title = base
+                    updatedFields.append("title")
                 }
 
-                if let artist = artist, Self.isUnknown(song.artist) {
+                if let artist = artist, Self.shouldOverwrite(current: song.artist, candidate: artist, fileURL: nil, reason: reason) {
                     song.artist = artist
+                    updatedFields.append("artist")
                 }
 
-                if let album = album, Self.isUnknown(song.album) {
+                if let album = album, Self.shouldOverwrite(current: song.album, candidate: album, fileURL: nil, reason: reason) {
                     song.album = album
+                    updatedFields.append("album")
                 }
 
                 if song.artworkData == nil, let data = downloadedArtwork {
                     song.artworkData = data
+                    updatedFields.append("artwork")
                 }
 
                 if let artworkURL = artworkURL, song.artworkURL == nil {
@@ -146,6 +225,12 @@ actor MetadataEnrichmentService {
 
                 song.lastEnrichedAt = Date()
                 song.metadataSource = source
+
+                if updatedFields.isEmpty {
+                    print("[Enrich] No field updated for \(songID) from \(source)")
+                } else {
+                    print("[Enrich] Updated \(updatedFields.joined(separator: ", ")) for \(songID) from \(source)")
+                }
             }
         }
     }
@@ -256,6 +341,7 @@ actor MetadataEnrichmentService {
         guard let url = components?.url else { return nil }
 
         do {
+            await throttleMusicBrainz()
             var request = URLRequest(url: url)
             request.setValue("OneMusic/1.0 (metadata enrichment)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -270,5 +356,16 @@ actor MetadataEnrichmentService {
         } catch {
             return nil
         }
+    }
+
+    private func throttleMusicBrainz() async {
+        if let last = lastMBRequestAt {
+            let elapsed = Date().timeIntervalSince(last)
+            if elapsed < 1.0 {
+                let delay = UInt64((1.0 - elapsed) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: delay)
+            }
+        }
+        lastMBRequestAt = Date()
     }
 }

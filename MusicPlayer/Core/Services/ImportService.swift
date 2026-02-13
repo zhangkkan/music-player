@@ -113,6 +113,11 @@ final class ImportService {
                     repository: songRepository,
                     reason: .importFile
                 )
+                await LyricsEnrichmentService.shared.enrich(
+                    songID: song.id,
+                    repository: songRepository,
+                    reason: .importFile
+                )
             }
 
             importedCount = index + 1

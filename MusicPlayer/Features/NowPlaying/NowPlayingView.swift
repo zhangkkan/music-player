@@ -7,6 +7,11 @@ struct NowPlayingView: View {
     @State private var viewModel = NowPlayingViewModel()
     @State private var isDragging = false
     @State private var dragTime: TimeInterval = 0
+    @State private var showEnrichInfo = false
+    @State private var enrichInfoMessage = ""
+    @State private var showEnrichResult = false
+    @State private var enrichResultMessage = ""
+    @State private var showForceAction = false
 
     var body: some View {
         NavigationStack {
@@ -65,12 +70,32 @@ struct NowPlayingView: View {
                 }
                 .padding(.horizontal)
             }
-            .background(Color(.systemBackground))
-            .onChange(of: playbackService.currentSong?.id) { _, _ in
-                if let song = playbackService.currentSong {
-                    viewModel.loadLyrics(for: song)
+        .background(Color(.systemBackground))
+        .alert("已同步", isPresented: $showEnrichInfo) {
+            if showForceAction {
+                Button("强制刷新") {
+                    guard let song = playbackService.currentSong else { return }
+                    Task {
+                        await refreshEnrichment(for: song, force: true)
+                    }
                 }
+                Button("知道了", role: .cancel) {}
+            } else {
+                Button("知道了", role: .cancel) {}
             }
+        } message: {
+            Text(enrichInfoMessage + (showForceAction ? "\n如需强制刷新，请点击“强制刷新”。" : ""))
+        }
+        .alert("同步结果", isPresented: $showEnrichResult) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(enrichResultMessage)
+        }
+        .onChange(of: playbackService.currentSong?.id) { _, _ in
+            if let song = playbackService.currentSong {
+                viewModel.loadLyrics(for: song)
+            }
+        }
             .onChange(of: playbackService.currentTime) { _, newTime in
                 if !isDragging {
                     viewModel.updateLyricIndex(at: newTime)
@@ -252,13 +277,14 @@ struct NowPlayingView: View {
             // Metadata Enrich
             Button {
                 guard let song = playbackService.currentSong else { return }
-                let repo = SongRepository(modelContext: modelContext)
-                Task {
-                    await MetadataEnrichmentService.shared.enrich(
-                        songID: song.id,
-                        repository: repo,
-                        reason: .manual
-                    )
+                if let last = latestSyncTime(for: song) {
+                    enrichInfoMessage = "已在 \(formatDate(last)) 同步过信息。"
+                    showForceAction = true
+                    showEnrichInfo = true
+                } else {
+                    Task {
+                        await refreshEnrichment(for: song, force: false)
+                    }
                 }
             } label: {
                 Image(systemName: "wand.and.stars")
@@ -282,4 +308,106 @@ struct NowPlayingView: View {
         let secs = Int(seconds) % 60
         return String(format: "%d:%02d", mins, secs)
     }
+
+    private func latestSyncTime(for song: Song) -> Date? {
+        let times = [song.lastEnrichedAt, song.lastLyricsFetchedAt].compactMap { $0 }
+        return times.max()
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func refreshEnrichment(for song: Song, force: Bool) async {
+        let before = snapshot(song: song)
+        let repo = SongRepository(modelContext: modelContext)
+        let reason: EnrichReason = force ? .force : .manual
+
+        await MetadataEnrichmentService.shared.enrich(
+            songID: song.id,
+            repository: repo,
+            reason: reason
+        )
+        await LyricsEnrichmentService.shared.enrich(
+            songID: song.id,
+            repository: repo,
+            reason: reason
+        )
+
+        let updated = repo.fetchById(song.id)
+        let message = buildResultMessage(before: before, after: updated)
+        await MainActor.run {
+            enrichResultMessage = message
+            showEnrichResult = true
+            showForceAction = false
+        }
+    }
+
+    private func snapshot(song: Song) -> SongSnapshot {
+        SongSnapshot(
+            title: song.title,
+            artist: song.artist,
+            album: song.album,
+            hasArtwork: song.artworkData != nil,
+            lyricsPath: song.lyricsPath
+        )
+    }
+
+    private func buildResultMessage(before: SongSnapshot, after: Song?) -> String {
+        guard let after = after else { return "同步完成，但无法读取更新后的数据。" }
+
+        let titleStatus = fieldStatus(before: before.title, after: after.title, isUnknown: isUnknownText(after.title))
+        let artistStatus = fieldStatus(before: before.artist, after: after.artist, isUnknown: isUnknownText(after.artist))
+        let albumStatus = fieldStatus(before: before.album, after: after.album, isUnknown: isUnknownText(after.album))
+        let artworkStatus = artworkResult(before: before.hasArtwork, after: after.artworkData != nil)
+        let lyricsStatus = lyricsResult(before: before.lyricsPath, after: after.lyricsPath)
+
+        return """
+        标题：\(titleStatus)
+        歌手：\(artistStatus)
+        专辑：\(albumStatus)
+        封面：\(artworkStatus)
+        歌词：\(lyricsStatus)
+        """
+    }
+
+    private func fieldStatus(before: String, after: String, isUnknown: Bool) -> String {
+        if before == after {
+            return isUnknown ? "未获取" : "已存在"
+        }
+        return "已更新"
+    }
+
+    private func artworkResult(before: Bool, after: Bool) -> String {
+        if before && after { return "已存在" }
+        if !before && after { return "获取成功" }
+        return "未获取"
+    }
+
+    private func lyricsResult(before: String?, after: String?) -> String {
+        if before != nil && after != nil { return "已存在" }
+        if before == nil && after != nil { return "获取成功" }
+        return "未获取"
+    }
+
+    private func isUnknownText(_ value: String) -> Bool {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ||
+            normalized == "unknown" ||
+            normalized == "unknown artist" ||
+            normalized == "unknown album" ||
+            normalized == "未知" ||
+            normalized == "未知艺术家" ||
+            normalized == "未知专辑"
+    }
+}
+
+private struct SongSnapshot {
+    let title: String
+    let artist: String
+    let album: String
+    let hasArtwork: Bool
+    let lyricsPath: String?
 }

@@ -4,6 +4,9 @@ import SwiftData
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var viewModel = SettingsViewModel()
+    @AppStorage("enrichment.lyrics.source") private var lyricsSourceRaw = LyricsSourceOption.lrclib.rawValue
+    @AppStorage("enrichment.correction.threshold") private var correctionThreshold = 0.8
+    @AppStorage("enrichment.cache.hours") private var cacheHours = 24.0
 
     var body: some View {
         NavigationStack {
@@ -79,6 +82,30 @@ struct SettingsView: View {
                     Button("清除缓存", role: .destructive) {
                         viewModel.clearCache()
                     }
+                }
+
+                Section("歌词与信息纠错") {
+                    Picker("歌词来源", selection: $lyricsSourceRaw) {
+                        ForEach(LyricsSourceOption.allCases) { option in
+                            Text(option.displayName).tag(option.rawValue)
+                        }
+                    }
+
+                    HStack {
+                        Text("纠错阈值")
+                        Spacer()
+                        Text(String(format: "%.2f", correctionThreshold))
+                            .foregroundColor(.secondary)
+                    }
+                    Slider(value: $correctionThreshold, in: 0.5...1.0, step: 0.01)
+
+                    HStack {
+                        Text("缓存时间(小时)")
+                        Spacer()
+                        Text(String(format: "%.0f", cacheHours))
+                            .foregroundColor(.secondary)
+                    }
+                    Slider(value: $cacheHours, in: 1...168, step: 1)
                 }
 
                 // About

@@ -197,6 +197,11 @@ final class PlaybackService {
                             repository: repo,
                             reason: .playback
                         )
+                        await LyricsEnrichmentService.shared.enrich(
+                            songID: song.id,
+                            repository: repo,
+                            reason: .playback
+                        )
                     }
                 }
             } catch {
