@@ -96,6 +96,12 @@ struct NowPlayingView: View {
                 viewModel.loadLyrics(for: song)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .lyricsDidUpdate)) { notification in
+            guard let song = playbackService.currentSong else { return }
+            if let id = notification.userInfo?["songID"] as? UUID, id == song.id {
+                viewModel.loadLyrics(for: song)
+            }
+        }
             .onChange(of: playbackService.currentTime) { _, newTime in
                 if !isDragging {
                     viewModel.updateLyricIndex(at: newTime)

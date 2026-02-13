@@ -62,6 +62,11 @@ actor LyricsEnrichmentService {
                     song.lyricsSource = "lrclib"
                     song.lastLyricsFetchedAt = Date()
                 }
+                NotificationCenter.default.post(
+                    name: .lyricsDidUpdate,
+                    object: nil,
+                    userInfo: ["songID": songID]
+                )
             }
         } catch {
             await MainActor.run {
@@ -128,4 +133,8 @@ actor LyricsEnrichmentService {
             return nil
         }
     }
+}
+
+extension Notification.Name {
+    static let lyricsDidUpdate = Notification.Name("lyricsDidUpdate")
 }
