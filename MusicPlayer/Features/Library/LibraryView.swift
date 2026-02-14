@@ -68,6 +68,12 @@ struct LibraryView: View {
             .onAppear {
                 viewModel.setup(modelContext: modelContext)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+                pendingDeleteSong = nil
+                showDeleteConfirm = false
+                showImporter = false
+                viewModel.resetForImport()
+            }
         }
     }
 
@@ -547,6 +553,9 @@ struct AlbumDetailView: View {
         .listStyle(.plain)
         .navigationTitle(album)
         .navigationBarTitleDisplayMode(.inline)
+        .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+            displayedSongs = []
+        }
     }
 
     private var albumHeaderImage: some View {
@@ -715,6 +724,11 @@ struct ArtistDetailView: View {
             .listStyle(.plain)
             .navigationTitle(artist)
             .navigationBarTitleDisplayMode(.inline)
+            .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+                displayedSongs = []
+                candidates = []
+                selectedCandidate = nil
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("头像") { showAvatarDrawer = true }
@@ -1005,6 +1019,9 @@ struct GenreDetailView: View {
         }
         .listStyle(.plain)
         .navigationTitle(genre)
+        .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+            displayedSongs = []
+        }
     }
 
     private func deleteSong(_ song: Song) {

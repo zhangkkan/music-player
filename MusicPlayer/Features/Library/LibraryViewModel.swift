@@ -45,6 +45,18 @@ final class LibraryViewModel {
         refreshArtistAvatars()
     }
 
+    func resetForImport() {
+        songs = []
+        artists = []
+        albums = []
+        genres = []
+        albumArtwork = [:]
+        artistArtwork = [:]
+        artistArtworkSource = [:]
+        artistLocked = [:]
+        knownArtistKeys = []
+    }
+
     func songsForArtist(_ artist: String) -> [Song] {
         songRepository?.fetchByArtist(artist) ?? []
     }

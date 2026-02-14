@@ -59,6 +59,10 @@ struct SearchView: View {
             .onChange(of: searchText) { _, newValue in
                 performSearch(query: newValue)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+                searchText = ""
+                results = []
+            }
         }
     }
 

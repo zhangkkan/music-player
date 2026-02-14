@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(PlaybackService.self) private var playbackService
+    @State private var refreshID = UUID()
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -26,11 +27,15 @@ struct ContentView: View {
                         Label("设置", systemImage: "gearshape")
                     }
             }
+            .id(refreshID)
 
             if playbackService.currentSong != nil {
                 MiniPlayerView()
                     .transition(.move(edge: .bottom))
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .backupDidImport)) { _ in
+            refreshID = UUID()
         }
         .fullScreenCover(isPresented: Binding(
             get: { playbackService.showNowPlaying },

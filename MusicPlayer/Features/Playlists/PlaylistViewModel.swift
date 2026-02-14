@@ -22,6 +22,11 @@ final class PlaylistViewModel {
         favoriteSongs = songRepository?.fetchFavorites() ?? []
     }
 
+    func resetForImport() {
+        playlists = []
+        favoriteSongs = []
+    }
+
     func createPlaylist(name: String) {
         _ = playlistRepository?.create(name: name)
         refresh()

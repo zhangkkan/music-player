@@ -91,6 +91,10 @@ struct PlaylistDetailView: View {
         .sheet(isPresented: $showAddSongs) {
             AddSongsSheet(playlist: playlist, viewModel: viewModel)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+            showRename = false
+            showAddSongs = false
+        }
     }
 }
 
@@ -145,6 +149,9 @@ struct AddSongsSheet: View {
             .onAppear {
                 let repo = SongRepository(modelContext: modelContext)
                 allSongs = repo.fetchAll()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+                allSongs = []
             }
         }
     }

@@ -27,6 +27,7 @@
 - 候选头像需显式保存，支持取消与保存失败提示
 - 艺术家头像加入 SwiftData Schema，保证持久化
 - 头像操作改为下方抽屉，候选列表更大卡片与新头像靠前
+- 支持 .zip 备份导入/导出（设置+歌曲+歌单+头像+歌词）
 - 数据管理：删除仅移除 App 记录，不删除文件本体；歌曲管理页统一清理
 
 ## 开发约定
@@ -48,6 +49,7 @@
 - 艺术家头像：`MusicPlayer/Core/Services/ArtistImageService.swift`
 - 艺术家头像仓库：`MusicPlayer/Core/Data/ArtistAvatarRepository.swift`
 - 艺术家头像候选：`MusicPlayer/Core/Services/ArtistImageService.swift`
+- 备份服务：`MusicPlayer/Core/Services/BackupService.swift`
  - 播放队列视图：`MusicPlayer/Features/NowPlaying/NowPlayingQueueView.swift`
  - 歌曲管理：`MusicPlayer/Features/Settings/SongManagementView.swift`
 

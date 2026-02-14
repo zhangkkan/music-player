@@ -54,6 +54,10 @@ struct SongManagementView: View {
         .onChange(of: searchText) { _, _ in
             reload()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+            searchText = ""
+            songs = []
+        }
     }
 
     private func reload() {

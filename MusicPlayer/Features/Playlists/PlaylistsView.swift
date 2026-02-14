@@ -84,6 +84,11 @@ struct PlaylistsView: View {
             .onAppear {
                 viewModel.setup(modelContext: modelContext)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+                showCreate = false
+                newPlaylistName = ""
+                viewModel.resetForImport()
+            }
         }
     }
 }
@@ -150,6 +155,9 @@ struct FavoritesDetailView: View {
         }
         .listStyle(.plain)
         .navigationTitle("我的收藏")
+        .onReceive(NotificationCenter.default.publisher(for: .backupWillImport)) { _ in
+            displayedSongs = []
+        }
     }
 
     private func deleteSong(_ song: Song) {
