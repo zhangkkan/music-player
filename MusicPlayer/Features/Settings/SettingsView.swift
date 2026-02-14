@@ -84,6 +84,17 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("歌曲管理") {
+                    NavigationLink {
+                        SongManagementView()
+                    } label: {
+                        Label("歌曲管理", systemImage: "tray.full")
+                    }
+                    Text("此处删除仅移除 App 内记录，不会删除文件系统中的歌曲。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
                 Section("歌词与信息纠错") {
                     Picker("歌词来源", selection: $lyricsSourceRaw) {
                         ForEach(LyricsSourceOption.allCases) { option in

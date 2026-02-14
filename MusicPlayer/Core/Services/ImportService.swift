@@ -71,6 +71,11 @@ final class ImportService {
                 print("No permission to access \(url.lastPathComponent)")
             }
 
+            if songRepository.fetchByFileURL(url.path) != nil {
+                print("Skip import (already exists): \(url.lastPathComponent)")
+                continue
+            }
+
             // Extract metadata
             let metadata = await metadataService.extractMetadata(from: url)
             let format = metadataService.audioFormat(for: url)

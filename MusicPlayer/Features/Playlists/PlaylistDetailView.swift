@@ -30,11 +30,19 @@ struct PlaylistDetailView: View {
 
                 ForEach(sortedSongs, id: \.id) { ps in
                     if let song = ps.song {
-                        SongRow(song: song) {
-                            let songs = sortedSongs.compactMap(\.song)
-                            let index = songs.firstIndex(where: { $0.id == song.id }) ?? 0
-                            playbackService.play(songs: songs, startIndex: index)
-                        }
+                        SongRow(
+                            song: song,
+                            onTap: {
+                                playbackService.showNowPlaying = true
+                                playbackService.enqueueAndPlay(song)
+                            },
+                            onDoubleTap: {
+                                playbackService.showNowPlaying = true
+                                let songs = sortedSongs.compactMap(\.song)
+                                let index = songs.firstIndex(where: { $0.id == song.id }) ?? 0
+                                playbackService.play(songs: songs, startIndex: index)
+                            }
+                        )
                     }
                 }
                 .onDelete { indexSet in
@@ -109,17 +117,17 @@ struct AddSongsSheet: View {
                                 viewModel.addSong(song, to: playlist)
                             }
                         } label: {
-                            HStack {
-                                SongRow(song: song) {}
-                                Spacer()
-                                if isInPlaylist {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.green)
-                                } else {
-                                    Image(systemName: "plus.circle")
-                                        .foregroundColor(.accentColor)
+                                HStack {
+                                    SongRow(song: song, onTap: {}, onDoubleTap: nil)
+                                    Spacer()
+                                    if isInPlaylist {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.green)
+                                    } else {
+                                        Image(systemName: "plus.circle")
+                                            .foregroundColor(.accentColor)
+                                    }
                                 }
-                            }
                         }
                         .buttonStyle(.plain)
                         .disabled(isInPlaylist)

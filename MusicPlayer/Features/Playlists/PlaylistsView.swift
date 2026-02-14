@@ -93,29 +93,85 @@ struct PlaylistsView: View {
 struct FavoritesDetailView: View {
     let songs: [Song]
     @Environment(PlaybackService.self) private var playbackService
+    @Environment(\.modelContext) private var modelContext
+    @State private var displayedSongs: [Song]
+
+    init(songs: [Song]) {
+        self.songs = songs
+        _displayedSongs = State(initialValue: songs)
+    }
 
     var body: some View {
         List {
-            if songs.isEmpty {
+            if displayedSongs.isEmpty {
                 Text("暂无收藏的歌曲")
                     .foregroundColor(.secondary)
             } else {
                 Button {
-                    playbackService.play(songs: songs)
+                    playbackService.play(songs: displayedSongs)
                 } label: {
                     Label("播放全部", systemImage: "play.fill")
                         .foregroundColor(.accentColor)
                 }
 
-                ForEach(songs, id: \.id) { song in
-                    SongRow(song: song) {
-                        playbackService.play(songs: songs,
-                                            startIndex: songs.firstIndex(where: { $0.id == song.id }) ?? 0)
+                ForEach(displayedSongs, id: \.id) { song in
+                    SongRow(
+                        song: song,
+                        onTap: {
+                            playbackService.showNowPlaying = true
+                            playbackService.enqueueAndPlay(song)
+                        },
+                        onDoubleTap: {
+                            playbackService.showNowPlaying = true
+                            playbackService.play(
+                                songs: displayedSongs,
+                                startIndex: displayedSongs.firstIndex(where: { $0.id == song.id }) ?? 0
+                            )
+                        }
+                    )
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            removeFromFavorites(song)
+                        } label: {
+                            Label("移出收藏", systemImage: "heart.slash")
+                        }
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            toggleFavorite(song)
+                        } label: {
+                            Label(song.isFavorite ? "取消收藏" : "收藏",
+                                  systemImage: song.isFavorite ? "heart.slash" : "heart")
+                        }
+                        .tint(song.isFavorite ? .gray : .red)
                     }
                 }
             }
         }
         .listStyle(.plain)
         .navigationTitle("我的收藏")
+    }
+
+    private func deleteSong(_ song: Song) {
+        displayedSongs.removeAll { $0.id == song.id }
+        playbackService.removeFromQueue(songID: song.id)
+        let repo = SongRepository(modelContext: modelContext)
+        repo.deleteSongAndCleanup(song)
+    }
+
+    private func toggleFavorite(_ song: Song) {
+        let repo = SongRepository(modelContext: modelContext)
+        repo.toggleFavorite(song)
+        if !song.isFavorite {
+            displayedSongs.removeAll { $0.id == song.id }
+        }
+    }
+
+    private func removeFromFavorites(_ song: Song) {
+        if song.isFavorite {
+            toggleFavorite(song)
+        } else {
+            displayedSongs.removeAll { $0.id == song.id }
+        }
     }
 }

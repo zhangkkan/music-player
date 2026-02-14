@@ -56,6 +56,14 @@ final class SongRepository {
         return (try? modelContext.fetch(descriptor))?.first
     }
 
+    func fetchByFileURL(_ fileURL: String) -> Song? {
+        let url = fileURL
+        let descriptor = FetchDescriptor<Song>(
+            predicate: #Predicate<Song> { $0.fileURL == url }
+        )
+        return (try? modelContext.fetch(descriptor))?.first
+    }
+
     func allArtists() -> [String] {
         let songs = fetchAll()
         return Array(Set(songs.map(\.artist))).sorted()
@@ -100,6 +108,20 @@ final class SongRepository {
     }
 
     func delete(_ song: Song) {
+        modelContext.delete(song)
+        save()
+    }
+
+    func deleteSongAndCleanup(_ song: Song) {
+        let songID = song.id
+        let descriptor = FetchDescriptor<PlaylistSong>(
+            predicate: #Predicate<PlaylistSong> { $0.song?.id == songID }
+        )
+        if let items = try? modelContext.fetch(descriptor) {
+            for item in items {
+                modelContext.delete(item)
+            }
+        }
         modelContext.delete(song)
         save()
     }

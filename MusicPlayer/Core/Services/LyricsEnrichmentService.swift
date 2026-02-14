@@ -43,11 +43,6 @@ actor LyricsEnrichmentService {
         print("[Lyrics] Fetch start for \(songID) - \(song.artist) / \(song.title)")
         guard let lrc = await fetchLRC(artist: song.artist, title: song.title, album: song.album, duration: song.duration) else {
             print("[Lyrics] Fetch empty for \(songID)")
-            await MainActor.run {
-                repository.update(songID: songID) { song in
-                    song.lastLyricsFetchedAt = Date()
-                }
-            }
             return
         }
 

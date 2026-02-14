@@ -32,6 +32,12 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom))
             }
         }
+        .fullScreenCover(isPresented: Binding(
+            get: { playbackService.showNowPlaying },
+            set: { playbackService.showNowPlaying = $0 }
+        )) {
+            NowPlayingView()
+        }
         .alert("文件已失效", isPresented: Binding(
             get: { playbackService.missingFileMessage != nil },
             set: { if !$0 { playbackService.missingFileMessage = nil } }

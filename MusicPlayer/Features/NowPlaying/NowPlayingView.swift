@@ -10,20 +10,30 @@ struct NowPlayingView: View {
     @State private var showEnrichInfo = false
     @State private var enrichInfoMessage = ""
     @State private var showEnrichResult = false
-    @State private var enrichResultMessage = ""
+    @State private var enrichResults: [EnrichResultRow] = []
     @State private var showForceAction = false
+    @State private var showEnrichLoading = false
+    @State private var isDismissing = false
+    @State private var dragOffset: CGSize = .zero
+    @State private var dragAxis: DragAxis = .none
+    @State private var showQueue = false
 
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
                 let isCompact = geometry.size.height < 700
+                let progress = dragProgress
 
-                VStack(spacing: isCompact ? 12 : 20) {
-                    // Drag indicator
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.3))
-                        .frame(width: 40, height: 5)
-                        .padding(.top, 8)
+                ZStack(alignment: .bottom) {
+                    Color.black.opacity(0.2 * (1 - progress))
+                        .ignoresSafeArea()
+
+                    VStack(spacing: isCompact ? 12 : 20) {
+                        // Drag indicator
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.3))
+                            .frame(width: 40, height: 5)
+                            .padding(.top, 8)
 
                     if let song = playbackService.currentSong {
                         // Artwork
@@ -67,29 +77,45 @@ struct NowPlayingView: View {
                         // Bottom toolbar
                         bottomToolbar(song: song)
                     }
-                }
-                .padding(.horizontal)
-            }
-        .background(Color(.systemBackground))
-        .alert("已同步", isPresented: $showEnrichInfo) {
-            if showForceAction {
-                Button("强制刷新") {
-                    guard let song = playbackService.currentSong else { return }
-                    Task {
-                        await refreshEnrichment(for: song, force: true)
                     }
+                    .padding(.horizontal)
+                    .padding(.top, 12)
+                    .padding(.bottom, geometry.safeAreaInsets.bottom)
+                    .background(
+                        UnevenRoundedRectangle(cornerRadii: .init(
+                            topLeading: 24,
+                            topTrailing: 24
+                        ))
+                            .fill(Color(.systemBackground))
+                    )
+                    .shadow(color: .black.opacity(0.15), radius: 20, y: 8)
+                    .contentShape(Rectangle())
+                    .offset(x: max(0, dragOffset.width), y: max(0, dragOffset.height))
+                    .gesture(dismissGesture)
+                    .ignoresSafeArea(edges: .bottom)
                 }
-                Button("知道了", role: .cancel) {}
-            } else {
-                Button("知道了", role: .cancel) {}
             }
-        } message: {
-            Text(enrichInfoMessage + (showForceAction ? "\n如需强制刷新，请点击“强制刷新”。" : ""))
+        .background(Color.clear)
+        .presentationBackground(.clear)
+        .sheet(isPresented: $showEnrichInfo) {
+            if let song = playbackService.currentSong {
+                EnrichInfoSheet(
+                    lastSyncText: enrichInfoMessage,
+                    showForceAction: showForceAction,
+                    onForce: {
+                        Task { await refreshEnrichment(for: song, force: true) }
+                    }
+                )
+                .presentationDetents([.height(240)])
+            }
         }
-        .alert("同步结果", isPresented: $showEnrichResult) {
-            Button("知道了", role: .cancel) {}
-        } message: {
-            Text(enrichResultMessage)
+        .sheet(isPresented: $showEnrichLoading) {
+            EnrichLoadingSheet()
+                .presentationDetents([.height(220)])
+        }
+        .sheet(isPresented: $showEnrichResult) {
+            EnrichResultSheet(results: enrichResults)
+                .presentationDetents([.medium])
         }
         .onChange(of: playbackService.currentSong?.id) { _, _ in
             if let song = playbackService.currentSong {
@@ -108,18 +134,33 @@ struct NowPlayingView: View {
                 }
             }
             .onAppear {
+                if !viewModel.didSetInitialLyrics {
+                    viewModel.showLyrics = true
+                    viewModel.showVisualizer = false
+                    viewModel.didSetInitialLyrics = true
+                }
                 if let song = playbackService.currentSong {
                     viewModel.loadLyrics(for: song)
                 }
                 playbackService.visualizer.isActive = viewModel.showVisualizer
             }
             .onDisappear {
+                viewModel.didSetInitialLyrics = false
                 playbackService.visualizer.isActive = false
             }
             .sheet(isPresented: $viewModel.showEqualizer) {
                 EqualizerView()
             }
+            .sheet(isPresented: $showQueue) {
+                NowPlayingQueueView()
+            }
         }
+    }
+
+    private var dragProgress: Double {
+        let distance = max(dragOffset.width, dragOffset.height)
+        if distance <= 0 { return 0 }
+        return min(1.0, Double(distance / 200))
     }
 
     // MARK: - Artwork
@@ -280,6 +321,13 @@ struct NowPlayingView: View {
                     .foregroundColor(.secondary)
             }
 
+            Button {
+                showQueue = true
+            } label: {
+                Image(systemName: "list.bullet")
+                    .foregroundColor(.secondary)
+            }
+
             // Metadata Enrich
             Button {
                 guard let song = playbackService.currentSong else { return }
@@ -305,8 +353,8 @@ struct NowPlayingView: View {
                     .foregroundColor(.secondary)
             }
         }
-        .font(.title3)
-        .padding(.bottom, 16)
+        .font(.title2)
+        .padding(.bottom, 20)
     }
 
     private func formatTime(_ seconds: TimeInterval) -> String {
@@ -326,10 +374,62 @@ struct NowPlayingView: View {
         return formatter.string(from: date)
     }
 
+    private var dismissGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                let startY = value.startLocation.y
+                let allowDown = startY < 120 && vertical > 0
+                let allowRight = horizontal > 0 && abs(vertical) < 120
+
+                if dragAxis == .none {
+                    if abs(vertical) > abs(horizontal), allowDown {
+                        dragAxis = .vertical
+                    } else if abs(horizontal) > abs(vertical), allowRight {
+                        dragAxis = .horizontal
+                    }
+                }
+
+                var offset = CGSize.zero
+                switch dragAxis {
+                case .vertical:
+                    if allowDown {
+                        offset.height = max(0, vertical)
+                    }
+                case .horizontal:
+                    if allowRight {
+                        offset.width = max(0, horizontal)
+                    }
+                case .none:
+                    break
+                }
+                dragOffset = offset
+            }
+            .onEnded { value in
+                guard !isDismissing else { return }
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                let startY = value.startLocation.y
+                let isTopPull = startY < 120 && vertical > 80
+                let isRightSwipe = horizontal > 80 && abs(vertical) < 60
+                if isTopPull || isRightSwipe {
+                    isDismissing = true
+                    dismiss()
+                } else {
+                    dragOffset = .zero
+                }
+                dragAxis = .none
+            }
+    }
+
     private func refreshEnrichment(for song: Song, force: Bool) async {
         let before = snapshot(song: song)
         let repo = SongRepository(modelContext: modelContext)
         let reason: EnrichReason = force ? .force : .manual
+        await MainActor.run {
+            showEnrichLoading = true
+        }
 
         await MetadataEnrichmentService.shared.enrich(
             songID: song.id,
@@ -343,9 +443,10 @@ struct NowPlayingView: View {
         )
 
         let updated = repo.fetchById(song.id)
-        let message = buildResultMessage(before: before, after: updated)
+        let results = buildResultResults(before: before, after: updated)
         await MainActor.run {
-            enrichResultMessage = message
+            enrichResults = results
+            showEnrichLoading = false
             showEnrichResult = true
             showForceAction = false
         }
@@ -361,8 +462,10 @@ struct NowPlayingView: View {
         )
     }
 
-    private func buildResultMessage(before: SongSnapshot, after: Song?) -> String {
-        guard let after = after else { return "同步完成，但无法读取更新后的数据。" }
+    private func buildResultResults(before: SongSnapshot, after: Song?) -> [EnrichResultRow] {
+        guard let after = after else {
+            return [EnrichResultRow(title: "同步", status: "未获取")]
+        }
 
         let titleStatus = fieldStatus(before: before.title, after: after.title, isUnknown: isUnknownText(after.title))
         let artistStatus = fieldStatus(before: before.artist, after: after.artist, isUnknown: isUnknownText(after.artist))
@@ -370,13 +473,22 @@ struct NowPlayingView: View {
         let artworkStatus = artworkResult(before: before.hasArtwork, after: after.artworkData != nil)
         let lyricsStatus = lyricsResult(before: before.lyricsPath, after: after.lyricsPath)
 
-        return """
-        标题：\(titleStatus)
-        歌手：\(artistStatus)
-        专辑：\(albumStatus)
-        封面：\(artworkStatus)
-        歌词：\(lyricsStatus)
-        """
+        let metaSource = after.metadataSource ?? "未知"
+        let lyricsSource = after.lyricsSource ?? "未知"
+        let metaTime = after.lastEnrichedAt.map(formatDate) ?? "未知"
+        let lyricsTime = after.lastLyricsFetchedAt.map(formatDate) ?? "未知"
+
+        return [
+            EnrichResultRow(title: "标题", status: titleStatus),
+            EnrichResultRow(title: "歌手", status: artistStatus),
+            EnrichResultRow(title: "专辑", status: albumStatus),
+            EnrichResultRow(title: "封面", status: artworkStatus),
+            EnrichResultRow(title: "歌词", status: lyricsStatus),
+            EnrichResultRow(title: "元数据来源", status: metaSource),
+            EnrichResultRow(title: "歌词来源", status: lyricsSource),
+            EnrichResultRow(title: "元数据更新时间", status: metaTime),
+            EnrichResultRow(title: "歌词更新时间", status: lyricsTime)
+        ]
     }
 
     private func fieldStatus(before: String, after: String, isUnknown: Bool) -> String {
@@ -416,4 +528,113 @@ private struct SongSnapshot {
     let album: String
     let hasArtwork: Bool
     let lyricsPath: String?
+}
+
+private enum DragAxis {
+    case none
+    case vertical
+    case horizontal
+}
+
+private struct EnrichResultRow: Identifiable {
+    let id = UUID()
+    let title: String
+    let status: String
+}
+
+private struct EnrichResultSheet: View {
+    let results: [EnrichResultRow]
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(results) { row in
+                    HStack {
+                        Text(row.title)
+                        Spacer()
+                        Text(row.status)
+                            .foregroundColor(color(for: row.status))
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("同步结果")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func color(for status: String) -> Color {
+        switch status {
+        case "已更新", "获取成功":
+            return .green
+        case "已存在":
+            return .secondary
+        default:
+            return .orange
+        }
+    }
+}
+
+private struct EnrichInfoSheet: View {
+    let lastSyncText: String
+    let showForceAction: Bool
+    let onForce: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.accentColor)
+                Text("已同步")
+                    .font(.headline)
+                Text(lastSyncText)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+
+                HStack(spacing: 12) {
+                    if showForceAction {
+                        Button("强制刷新") {
+                            onForce()
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button("知道了") { dismiss() }
+                        .buttonStyle(.bordered)
+                }
+            }
+            .padding(.vertical, 24)
+            .navigationTitle("同步信息")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+private struct EnrichLoadingSheet: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                Text("正在同步…")
+                    .font(.headline)
+                Text("请稍候，正在获取封面、信息与歌词")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 24)
+            .navigationTitle("同步中")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
 }

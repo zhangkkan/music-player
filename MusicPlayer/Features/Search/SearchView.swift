@@ -35,10 +35,20 @@ struct SearchView: View {
                 } else {
                     List {
                         ForEach(results, id: \.id) { song in
-                            SongRow(song: song) {
-                                playbackService.play(songs: results,
-                                                    startIndex: results.firstIndex(where: { $0.id == song.id }) ?? 0)
-                            }
+                            SongRow(
+                                song: song,
+                                onTap: {
+                                    playbackService.showNowPlaying = true
+                                    playbackService.enqueueAndPlay(song)
+                                },
+                                onDoubleTap: {
+                                    playbackService.showNowPlaying = true
+                                    playbackService.play(
+                                        songs: results,
+                                        startIndex: results.firstIndex(where: { $0.id == song.id }) ?? 0
+                                    )
+                                }
+                            )
                         }
                     }
                     .listStyle(.plain)

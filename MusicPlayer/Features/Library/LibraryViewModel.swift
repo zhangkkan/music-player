@@ -18,8 +18,10 @@ final class LibraryViewModel {
     var showImporter = false
 
     private var songRepository: SongRepository?
+    private var modelContext: ModelContext?
 
     func setup(modelContext: ModelContext) {
+        self.modelContext = modelContext
         songRepository = SongRepository(modelContext: modelContext)
         refresh()
     }
@@ -49,10 +51,7 @@ final class LibraryViewModel {
     }
 
     func deleteSong(_ song: Song) {
-        // Remove file from disk
-        let url = URL(fileURLWithPath: song.fileURL)
-        try? FileManager.default.removeItem(at: url)
-        songRepository?.delete(song)
+        songRepository?.deleteSongAndCleanup(song)
         refresh()
     }
 

@@ -35,6 +35,7 @@ final class PlaybackService {
     var currentIndex: Int = 0
     var playbackMode: PlaybackMode = .sequential
     var missingFileMessage: String?
+    var showNowPlaying: Bool = false
 
     var isPlaying: Bool { audioEngine.isPlaying }
     var currentTime: TimeInterval { audioEngine.currentTime }
@@ -138,6 +139,26 @@ final class PlaybackService {
         playQueue.append(song)
     }
 
+    func enqueueAndPlay(_ song: Song) {
+        if let index = playQueue.firstIndex(where: { $0.id == song.id }) {
+            currentIndex = index
+            startPlayback(playQueue[currentIndex])
+            return
+        }
+        // Append but play the queued instance to avoid detached context issues
+        playQueue.append(song)
+        currentIndex = playQueue.count - 1
+        startPlayback(playQueue[currentIndex])
+    }
+
+    func moveQueue(from source: IndexSet, to destination: Int) {
+        let currentID = currentSong?.id
+        playQueue.move(fromOffsets: source, toOffset: destination)
+        if let currentID = currentID, let newIndex = playQueue.firstIndex(where: { $0.id == currentID }) {
+            currentIndex = newIndex
+        }
+    }
+
     func removeFromQueue(at index: Int) {
         guard index >= 0, index < playQueue.count else { return }
         playQueue.remove(at: index)
@@ -150,6 +171,12 @@ final class PlaybackService {
                 currentIndex = min(currentIndex, playQueue.count - 1)
                 startPlayback(playQueue[currentIndex])
             }
+        }
+    }
+
+    func removeFromQueue(songID: UUID) {
+        if let index = playQueue.firstIndex(where: { $0.id == songID }) {
+            removeFromQueue(at: index)
         }
     }
 

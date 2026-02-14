@@ -7,6 +7,7 @@ final class NowPlayingViewModel {
     var showEqualizer = false
     var lyrics: [LyricLine] = []
     var currentLyricIndex: Int?
+    var didSetInitialLyrics = false
 
     private let lyricsService = LyricsService.shared
 
