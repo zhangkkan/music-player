@@ -1,14 +1,35 @@
 # MusicPlayer
 
-一个基于 SwiftUI 的本地音乐播放器项目，支持音乐库管理、播放列表、搜索以及播放控制等核心能力，面向 iOS 17+。
+一个基于 SwiftUI 的本地音乐播放器（iOS 17+），面向离线文件播放与管理，覆盖完整的导入、播放、收藏、播放列表、歌词与元数据补全能力。
 
-## 主要功能
-- 音乐库：按歌曲/专辑/艺术家/流派浏览，支持导入本地音频文件与收藏
-- 播放控制：顺序/列表循环/单曲循环/随机播放、播放队列管理
-- 迷你播放器与正在播放界面
+## 功能特性
+- 音乐库
+  - 歌曲/专辑/歌手/流派/收藏多维浏览
+  - 文件导入（Document Picker / Files）
+  - 单击追加到队列并播放；双击替换队列并播放
+- 正在播放与队列
+  - 迷你播放器 + 全屏 Now Playing
+  - 播放队列管理：查看/排序/删除/保存为歌单
+  - 播放模式：顺序/列表循环/单曲循环/随机
+- 播放列表
+  - 歌单创建、添加/移除歌曲
+  - 列表页快捷收藏到歌单
+  - 队列一键保存为歌单
+- 元数据与封面补全
+  - iTunes Search + MusicBrainz（无需 API Key）
+  - 缺失/可疑字段自动补全，支持强制刷新
+  - 同步结果与来源提示
+- 歌词自动获取
+  - LRCLIB（无 API Key）
+  - 导入/播放/手动触发三种入口
+  - 仅保存同步歌词（LRC）
 - 均衡器与可视化
-- 歌词展示
-- 睡眠定时与锁屏/系统控制集成（Now Playing/Remote Command）
+- 系统集成
+  - Now Playing / Remote Command
+  - 睡眠定时
+- 数据安全
+  - 删除仅移除 App 记录，不删除文件本体
+  - 歌曲管理页统一清理/管理记录
 
 ## 技术栈
 - Swift 5.9 / SwiftUI
@@ -30,5 +51,15 @@
 
 可选：如需通过 `project.yml` 重新生成工程，请安装 XcodeGen 后运行 `xcodegen`。
 
+## 开发指南
+- 入口与路由：`MusicPlayer/App/ContentView.swift`
+- 播放控制：`MusicPlayer/Core/Services/PlaybackService.swift`
+- 数据读写：`MusicPlayer/Core/Data/SongRepository.swift`
+- 元数据补全：`MusicPlayer/Core/Services/MetadataEnrichmentService.swift`
+- 歌词补全：`MusicPlayer/Core/Services/LyricsEnrichmentService.swift`
+- 现在播放：`MusicPlayer/Features/NowPlaying`
+- 播放列表：`MusicPlayer/Features/Playlists`
+- 音乐库：`MusicPlayer/Features/Library`
+
 ## 备注
-- 本项目主要围绕本地音频文件播放，导入入口在音乐库页面右上角“+”。
+- 本项目面向本地音频文件播放，导入入口在音乐库页面右上角“+”。
