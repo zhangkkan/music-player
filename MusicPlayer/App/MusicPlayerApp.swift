@@ -9,7 +9,7 @@ struct MusicPlayerApp: App {
 
     init() {
         do {
-            let schema = Schema([Song.self, Playlist.self, PlaylistSong.self])
+            let schema = Schema([Song.self, Playlist.self, PlaylistSong.self, ArtistAvatar.self])
             let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
             modelContainer = try ModelContainer(for: schema, configurations: [config])
             PlaybackService.shared.modelContainer = modelContainer

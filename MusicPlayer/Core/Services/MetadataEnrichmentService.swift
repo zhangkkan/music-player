@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 import SwiftData
 
 enum EnrichReason {
@@ -37,6 +38,12 @@ actor MetadataEnrichmentService {
         if !shouldEnrich(song, reason: reason) {
             print("[Enrich] Skip for \(songID) (cache or not needed)")
             return
+        }
+
+        await MainActor.run {
+            repository.update(songID: songID) { song in
+                song.lastMetadataAttemptAt = Date()
+            }
         }
 
         let query = Self.buildQuery(title: song.title, artist: song.artist, fileURL: song.fileURL)
@@ -128,6 +135,10 @@ actor MetadataEnrichmentService {
     ) -> Bool {
         if reason == .manual || reason == .force { return true }
 
+        if hasSourceTag(current) {
+            return true
+        }
+
         if let fileURL = fileURL, Self.isMissing(current, fileURL: fileURL) {
             return true
         }
@@ -138,6 +149,21 @@ actor MetadataEnrichmentService {
 
         let score = similarityScore(current, candidate)
         return score >= EnrichmentSettings.correctionThreshold
+    }
+
+    nonisolated private static func hasSourceTag(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return false }
+        if trimmed.range(of: #"^\s*[\[\(\{].+[\]\)\}]\s*"#, options: .regularExpression) != nil {
+            return true
+        }
+        if trimmed.range(of: #"https?://|www\\."#, options: .regularExpression) != nil {
+            return true
+        }
+        if trimmed.range(of: #"\\.(com|net|org|cn|jp|kr|io|me|tv)\\b"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
     }
 
     nonisolated private static func similarityScore(_ a: String, _ b: String) -> Double {
@@ -181,6 +207,51 @@ actor MetadataEnrichmentService {
         return costs[bChars.count]
     }
 
+    nonisolated private static func normalizeChineseIfNeeded(_ value: String) -> (value: String, wasConverted: Bool) {
+        let simplified = convertToSimplified(value)
+        let ratio = detectTraditionalRatio(original: value, simplified: simplified)
+        if ratio >= 0.1 {
+            return (simplified, true)
+        }
+        return (value, false)
+    }
+
+    nonisolated private static func detectTraditionalRatio(original: String, simplified: String) -> Double {
+        let originalScalars = Array(original.unicodeScalars)
+        let simplifiedScalars = Array(simplified.unicodeScalars)
+        guard originalScalars.count == simplifiedScalars.count else { return 0 }
+
+        var cjkCount = 0
+        var diffCount = 0
+        for (o, s) in zip(originalScalars, simplifiedScalars) {
+            if isCJK(o) {
+                cjkCount += 1
+                if o != s {
+                    diffCount += 1
+                }
+            }
+        }
+        guard cjkCount > 0 else { return 0 }
+        return Double(diffCount) / Double(cjkCount)
+    }
+
+    nonisolated private static func convertToSimplified(_ text: String) -> String {
+        let mutable = NSMutableString(string: text) as CFMutableString
+        CFStringTransform(mutable, nil, "Traditional-Simplified" as CFString, false)
+        return mutable as String
+    }
+
+    nonisolated private static func isCJK(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x4E00...0x9FFF,
+             0x3400...0x4DBF,
+             0xF900...0xFAFF:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func applyEnrichedData(
         songID: UUID,
         repository: SongRepository,
@@ -196,17 +267,33 @@ actor MetadataEnrichmentService {
             repository.update(songID: songID) { song in
                 let base = Self.fileBaseName(song.fileURL)
                 var updatedFields: [String] = []
-                if let title = title, Self.shouldOverwrite(current: song.title, candidate: title, fileURL: song.fileURL, reason: reason) {
-                    song.title = title
-                    updatedFields.append("title")
+                if let title = title {
+                    let normalizedTitle = Self.normalizeChineseIfNeeded(title)
+                    if normalizedTitle.wasConverted {
+                        print("[Enrich] Simplified title for \(songID)")
+                    }
+                    if Self.shouldOverwrite(current: song.title, candidate: normalizedTitle.value, fileURL: song.fileURL, reason: reason) {
+                        song.title = normalizedTitle.value
+                        updatedFields.append("title")
+                    }
                 } else if Self.isMissing(song.title, fileURL: song.fileURL) && !base.isEmpty {
-                    song.title = base
+                    let normalizedBase = Self.normalizeChineseIfNeeded(base)
+                    if normalizedBase.wasConverted {
+                        print("[Enrich] Simplified title from filename for \(songID)")
+                    }
+                    song.title = normalizedBase.value
                     updatedFields.append("title")
                 }
 
-                if let artist = artist, Self.shouldOverwrite(current: song.artist, candidate: artist, fileURL: nil, reason: reason) {
-                    song.artist = artist
-                    updatedFields.append("artist")
+                if let artist = artist {
+                    let normalizedArtist = Self.normalizeChineseIfNeeded(artist)
+                    if normalizedArtist.wasConverted {
+                        print("[Enrich] Simplified artist for \(songID)")
+                    }
+                    if Self.shouldOverwrite(current: song.artist, candidate: normalizedArtist.value, fileURL: nil, reason: reason) {
+                        song.artist = normalizedArtist.value
+                        updatedFields.append("artist")
+                    }
                 }
 
                 if let album = album, Self.shouldOverwrite(current: song.album, candidate: album, fileURL: nil, reason: reason) {
@@ -223,12 +310,11 @@ actor MetadataEnrichmentService {
                     song.artworkURL = artworkURL
                 }
 
-                song.lastEnrichedAt = Date()
-                song.metadataSource = source
-
                 if updatedFields.isEmpty {
                     print("[Enrich] No field updated for \(songID) from \(source)")
                 } else {
+                    song.lastEnrichedAt = Date()
+                    song.metadataSource = source
                     print("[Enrich] Updated \(updatedFields.joined(separator: ", ")) for \(songID) from \(source)")
                 }
             }

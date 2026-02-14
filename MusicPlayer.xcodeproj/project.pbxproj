@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C2D3E4F5061728394A5B6C7D /* ArtistAvatarRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5061728394A5B6C7D /* ArtistAvatarRepository.swift */; };
+		B1C2D3E4F5A60123456789AB /* ArtistImageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60123456789AB /* ArtistImageService.swift */; };
 		1093EB657801990DE5DFFB38 /* EqualizerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6EF00B5B2713EC3A1AA4F0B /* EqualizerView.swift */; };
 		11808E70B3638A7B40F57005 /* NowPlayingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C334BBFDF60116AC5378C64E /* NowPlayingViewModel.swift */; };
 		15221F17BB60F31B7DD308DC /* PlaylistRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C105704DC5ABF8051F089E9F /* PlaylistRepository.swift */; };
@@ -48,6 +50,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B2C3D4E5061728394A5B6C7D /* ArtistAvatarRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistAvatarRepository.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60123456789AB /* ArtistImageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtistImageService.swift; sourceTree = "<group>"; };
 		02C4F2FB3CA8B3E90897A7DA /* MusicPlayerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicPlayerApp.swift; sourceTree = "<group>"; };
 		06D5FC2EFEA2206DE88EF157 /* LyricsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsView.swift; sourceTree = "<group>"; };
 		0836BF68F2C82DC01A2D55E3 /* AudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioEngine.swift; sourceTree = "<group>"; };
@@ -182,6 +186,7 @@
 		800AA3332C36D6D194710459 /* Data */ = {
 			isa = PBXGroup;
 			children = (
+				B2C3D4E5061728394A5B6C7D /* ArtistAvatarRepository.swift */,
 				4C6043B99095308D9249FFBE /* Models.swift */,
 				C105704DC5ABF8051F089E9F /* PlaylistRepository.swift */,
 				A922D6796BEDC70CE8F7D944 /* SongRepository.swift */,
@@ -206,6 +211,7 @@
 		AB2B7556F62D1FCC76BDD4DB /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				A1B2C3D4E5F60123456789AB /* ArtistImageService.swift */,
 				5F6E7D8C9B0A1B2C3D4E5F6A /* EnrichmentSettings.swift */,
 				2A594135B1243A7443B53328 /* ImportService.swift */,
 				E08642F298FAF2F785B7E20D /* LyricsService.swift */,
@@ -328,6 +334,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C2D3E4F5061728394A5B6C7D /* ArtistAvatarRepository.swift in Sources */,
+				B1C2D3E4F5A60123456789AB /* ArtistImageService.swift in Sources */,
 				AD31127ED3F624B27128ECC9 /* AudioEngine.swift in Sources */,
 				73423E34F9519B89E62942E8 /* AudioVisualizer.swift in Sources */,
 				73D358B7EEEC8367DB0C97F2 /* CarPlaySceneDelegate.swift in Sources */,

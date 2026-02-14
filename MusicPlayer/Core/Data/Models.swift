@@ -20,9 +20,11 @@ final class Song {
     @Attribute(.externalStorage) var artworkData: Data?
     @Attribute(.externalStorage) var fileBookmark: Data?
     var lastEnrichedAt: Date?
+    var lastMetadataAttemptAt: Date?
     var metadataSource: String?
     var artworkURL: String?
     var lastLyricsFetchedAt: Date?
+    var lastLyricsAttemptAt: Date?
     var lyricsSource: String?
     var lyricsPath: String?
     var addedAt: Date
@@ -48,9 +50,11 @@ final class Song {
         artworkData: Data? = nil,
         fileBookmark: Data? = nil,
         lastEnrichedAt: Date? = nil,
+        lastMetadataAttemptAt: Date? = nil,
         metadataSource: String? = nil,
         artworkURL: String? = nil,
         lastLyricsFetchedAt: Date? = nil,
+        lastLyricsAttemptAt: Date? = nil,
         lyricsSource: String? = nil,
         lyricsPath: String? = nil,
         addedAt: Date = Date()
@@ -72,9 +76,11 @@ final class Song {
         self.artworkData = artworkData
         self.fileBookmark = fileBookmark
         self.lastEnrichedAt = lastEnrichedAt
+        self.lastMetadataAttemptAt = lastMetadataAttemptAt
         self.metadataSource = metadataSource
         self.artworkURL = artworkURL
         self.lastLyricsFetchedAt = lastLyricsFetchedAt
+        self.lastLyricsAttemptAt = lastLyricsAttemptAt
         self.lyricsSource = lyricsSource
         self.lyricsPath = lyricsPath
         self.addedAt = addedAt
@@ -125,5 +131,34 @@ final class PlaylistSong {
         self.order = order
         self.song = song
         self.playlist = playlist
+    }
+}
+
+@Model
+final class ArtistAvatar {
+    @Attribute(.unique) var artistKey: String
+    var artistName: String
+    @Attribute(.externalStorage) var imageData: Data?
+    var source: String
+    var isLocked: Bool
+    var sourceId: String?
+    var updatedAt: Date
+
+    init(
+        artistKey: String,
+        artistName: String,
+        imageData: Data?,
+        source: String,
+        isLocked: Bool = false,
+        sourceId: String? = nil,
+        updatedAt: Date = Date()
+    ) {
+        self.artistKey = artistKey
+        self.artistName = artistName
+        self.imageData = imageData
+        self.source = source
+        self.isLocked = isLocked
+        self.sourceId = sourceId
+        self.updatedAt = updatedAt
     }
 }

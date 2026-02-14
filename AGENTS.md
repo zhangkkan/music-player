@@ -11,6 +11,22 @@
 - 播放列表：创建/管理、列表页快速收藏、队列一键保存
 - 元数据补全：iTunes Search + MusicBrainz（无需 API Key），支持强制刷新与同步结果提示
 - 歌词补全：LRCLIB（LRC），导入/播放/手动触发
+- 歌词查询会清洗来源标签/域名，提升命中率
+- 歌词获取会先等待元数据补全完成，确保使用矫正后的参数
+- 歌词查询优先简体标题，其次繁体，并优先使用更宽松的查询组合
+- 歌词查询的歌手名也按简体优先、繁体其次的顺序尝试
+- 歌词解析支持宽松时间戳与多编码回退，避免解析为空
+- 歌词查询前两次严格优先：简体/繁体歌手+歌名，且不带专辑与时长
+- 音乐库专辑/艺术家列表自动展示封面/头像（复用歌曲 artwork）
+- 专辑/艺术家详情页顶部增加头图展示
+- 艺术家头像使用 iTunes Search 结果并本地缓存
+- 艺术家头像与歌曲解耦，支持手动替换/刷新/恢复自动
+- 艺术家详情页支持拉取多候选头像并选择，任何操作后锁定不再自动刷新
+- 艺术家头像仅首次出现自动附着一次，之后仅允许手动选择
+- 艺术家候选头像去重且优先高清，选择后自动回到顶部
+- 候选头像需显式保存，支持取消与保存失败提示
+- 艺术家头像加入 SwiftData Schema，保证持久化
+- 头像操作改为下方抽屉，候选列表更大卡片与新头像靠前
 - 数据管理：删除仅移除 App 记录，不删除文件本体；歌曲管理页统一清理
 
 ## 开发约定
@@ -28,7 +44,10 @@
 - 音频播放：`MusicPlayer/Core/Services/PlaybackService.swift`
  - 数据仓库：`MusicPlayer/Core/Data/SongRepository.swift`
  - 元数据补全：`MusicPlayer/Core/Services/MetadataEnrichmentService.swift`
- - 歌词补全：`MusicPlayer/Core/Services/LyricsEnrichmentService.swift`
+- 歌词补全：`MusicPlayer/Core/Services/LyricsEnrichmentService.swift`
+- 艺术家头像：`MusicPlayer/Core/Services/ArtistImageService.swift`
+- 艺术家头像仓库：`MusicPlayer/Core/Data/ArtistAvatarRepository.swift`
+- 艺术家头像候选：`MusicPlayer/Core/Services/ArtistImageService.swift`
  - 播放队列视图：`MusicPlayer/Features/NowPlaying/NowPlayingQueueView.swift`
  - 歌曲管理：`MusicPlayer/Features/Settings/SongManagementView.swift`
 

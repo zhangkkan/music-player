@@ -113,16 +113,37 @@ final class ImportService {
             songs.append(song)
 
             Task {
+                // 先执行元数据增强，等待完成
                 await MetadataEnrichmentService.shared.enrich(
                     songID: song.id,
                     repository: songRepository,
                     reason: .importFile
                 )
-                await LyricsEnrichmentService.shared.enrich(
-                    songID: song.id,
-                    repository: songRepository,
-                    reason: .importFile
-                )
+
+                // 等待一小段时间，确保数据库持久化完成
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5秒延迟
+
+                // 重新获取歌曲对象，确保使用最新的元数据（简体歌名）
+                if let updatedSong = songRepository.fetchById(song.id),
+                   let lastEnrichedAt = updatedSong.lastEnrichedAt {
+                    // 确认元数据增强已完成
+                    print("[Import] Metadata enrichment confirmed for \(song.id) at \(lastEnrichedAt)")
+
+                    // 现在开始查询歌词，使用最新的简体歌名
+                    await LyricsEnrichmentService.shared.enrich(
+                        songID: song.id,
+                        repository: songRepository,
+                        reason: .importFile
+                    )
+                } else {
+                    print("[Import] WARNING: Metadata enrichment may not have completed for \(song.id)")
+                    // 即使元数据增强可能未完成，也尝试查询歌词（作为降级方案）
+                    await LyricsEnrichmentService.shared.enrich(
+                        songID: song.id,
+                        repository: songRepository,
+                        reason: .importFile
+                    )
+                }
             }
 
             importedCount = index + 1

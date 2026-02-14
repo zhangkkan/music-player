@@ -7,12 +7,12 @@ struct NowPlayingView: View {
     @State private var viewModel = NowPlayingViewModel()
     @State private var isDragging = false
     @State private var dragTime: TimeInterval = 0
-    @State private var showEnrichInfo = false
     @State private var enrichInfoMessage = ""
     @State private var showEnrichResult = false
     @State private var enrichResults: [EnrichResultRow] = []
     @State private var showForceAction = false
-    @State private var showEnrichLoading = false
+    @State private var isEnriching = false
+    @State private var enrichSheetHeight: CGFloat = 420
     @State private var isDismissing = false
     @State private var dragOffset: CGSize = .zero
     @State private var dragAxis: DragAxis = .none
@@ -97,35 +97,59 @@ struct NowPlayingView: View {
             }
         .background(Color.clear)
         .presentationBackground(.clear)
-        .sheet(isPresented: $showEnrichInfo) {
-            if let song = playbackService.currentSong {
-                EnrichInfoSheet(
-                    lastSyncText: enrichInfoMessage,
-                    showForceAction: showForceAction,
-                    onForce: {
+        .sheet(isPresented: $showEnrichResult, onDismiss: {
+            showForceAction = false
+            enrichInfoMessage = ""
+            isEnriching = false
+        }) {
+            EnrichResultSheet(
+                results: enrichResults,
+                lastSyncText: enrichInfoMessage,
+                showForceAction: showForceAction,
+                isEnriching: isEnriching,
+                onForce: {
+                    if let song = playbackService.currentSong {
                         Task { await refreshEnrichment(for: song, force: true) }
                     }
-                )
-                .presentationDetents([.height(240)])
+                },
+                onHeightChange: { height in
+                    enrichSheetHeight = max(260, min(height, 600))
+                }
+            )
+                .presentationDetents([.height(enrichSheetHeight)])
+        }
+        .onChange(of: playbackService.currentSong?.id) { oldValue, newValue in
+            print("[NowPlaying] onChange(currentSong.id) - old: \(oldValue?.uuidString ?? "nil"), new: \(newValue?.uuidString ?? "nil")")
+            if let song = playbackService.currentSong {
+                print("[NowPlaying] onChange(currentSong.id) - loading lyrics for: \(song.title)")
+                viewModel.loadLyrics(for: song)
+                triggerAutoLyricsFetchIfNeeded(song: song)
             }
         }
-        .sheet(isPresented: $showEnrichLoading) {
-            EnrichLoadingSheet()
-                .presentationDetents([.height(220)])
-        }
-        .sheet(isPresented: $showEnrichResult) {
-            EnrichResultSheet(results: enrichResults)
-                .presentationDetents([.medium])
-        }
-        .onChange(of: playbackService.currentSong?.id) { _, _ in
+        .onChange(of: playbackService.currentSong?.lyricsPath) { oldValue, newValue in
+            print("[NowPlaying] onChange(lyricsPath) - old: \(oldValue ?? "nil"), new: \(newValue ?? "nil")")
             if let song = playbackService.currentSong {
+                print("[NowPlaying] onChange(lyricsPath) - reloading lyrics for: \(song.title)")
                 viewModel.loadLyrics(for: song)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .lyricsDidUpdate)) { notification in
-            guard let song = playbackService.currentSong else { return }
-            if let id = notification.userInfo?["songID"] as? UUID, id == song.id {
-                viewModel.loadLyrics(for: song)
+            guard let songID = notification.userInfo?["songID"] as? UUID else { return }
+            print("[NowPlaying] lyricsDidUpdate notification received for songID: \(songID)")
+            // 检查当前是否正在播放这首歌
+            guard playbackService.currentSong?.id == songID else {
+                print("[NowPlaying] lyricsDidUpdate - ignored, not current song")
+                return
+            }
+            print("[NowPlaying] lyricsDidUpdate - fetching updated song from DB")
+            // 重新从数据库获取最新的歌曲对象，确保歌词路径已更新
+            let repo = SongRepository(modelContext: modelContext)
+            if let updatedSong = repo.fetchById(songID) {
+                print("[NowPlaying] lyricsDidUpdate - updating playbackService.currentSong, lyricsPath: \(updatedSong.lyricsPath ?? "nil")")
+                // 更新 playbackService 的引用（这会触发 .onChange 监听器，自动加载歌词）
+                playbackService.currentSong = updatedSong
+            } else {
+                print("[NowPlaying] lyricsDidUpdate - ERROR: song not found in DB!")
             }
         }
             .onChange(of: playbackService.currentTime) { _, newTime in
@@ -134,13 +158,29 @@ struct NowPlayingView: View {
                 }
             }
             .onAppear {
+                print("[NowPlaying] onAppear - entering detail page")
                 if !viewModel.didSetInitialLyrics {
                     viewModel.showLyrics = true
                     viewModel.showVisualizer = false
                     viewModel.didSetInitialLyrics = true
                 }
-                if let song = playbackService.currentSong {
-                    viewModel.loadLyrics(for: song)
+                if let currentSong = playbackService.currentSong {
+                    // 重新从数据库获取最新的歌曲对象，避免使用过时的内存对象
+                    let repo = SongRepository(modelContext: modelContext)
+                    if let song = repo.fetchById(currentSong.id) {
+                        print("[NowPlaying] onAppear - fetched latest song from DB: \(song.title) by \(song.artist)")
+                        print("[NowPlaying] onAppear - lyricsPath: \(song.lyricsPath ?? "nil")")
+                        print("[NowPlaying] onAppear - lastLyricsFetchedAt: \(song.lastLyricsFetchedAt?.description ?? "nil")")
+                        print("[NowPlaying] onAppear - lastLyricsAttemptAt: \(song.lastLyricsAttemptAt?.description ?? "nil")")
+                        // 更新 playbackService 的引用为最新对象
+                        playbackService.currentSong = song
+                        viewModel.loadLyrics(for: song)
+                        triggerAutoLyricsFetchIfNeeded(song: song)
+                    } else {
+                        print("[NowPlaying] onAppear - ERROR: song not found in DB!")
+                    }
+                } else {
+                    print("[NowPlaying] onAppear - no current song")
                 }
                 playbackService.visualizer.isActive = viewModel.showVisualizer
             }
@@ -331,15 +371,10 @@ struct NowPlayingView: View {
             // Metadata Enrich
             Button {
                 guard let song = playbackService.currentSong else { return }
-                if let last = latestSyncTime(for: song) {
-                    enrichInfoMessage = "已在 \(formatDate(last)) 同步过信息。"
-                    showForceAction = true
-                    showEnrichInfo = true
-                } else {
-                    Task {
-                        await refreshEnrichment(for: song, force: false)
-                    }
-                }
+                enrichInfoMessage = buildLastSyncText(for: song)
+                showForceAction = true
+                enrichResults = buildResultResults(before: snapshot(song: song), after: song)
+                showEnrichResult = true
             } label: {
                 Image(systemName: "wand.and.stars")
                     .foregroundColor(.secondary)
@@ -366,6 +401,13 @@ struct NowPlayingView: View {
     private func latestSyncTime(for song: Song) -> Date? {
         let times = [song.lastEnrichedAt, song.lastLyricsFetchedAt].compactMap { $0 }
         return times.max()
+    }
+
+    private func buildLastSyncText(for song: Song) -> String {
+        if let last = latestSyncTime(for: song) {
+            return "上次同步：\(formatDate(last))"
+        }
+        return "上次同步：暂无成功同步"
     }
 
     private func formatDate(_ date: Date) -> String {
@@ -424,11 +466,15 @@ struct NowPlayingView: View {
     }
 
     private func refreshEnrichment(for song: Song, force: Bool) async {
+        print("[NowPlaying] refreshEnrichment - MANUAL REFRESH triggered (force: \(force)) for: \(song.title)")
         let before = snapshot(song: song)
         let repo = SongRepository(modelContext: modelContext)
         let reason: EnrichReason = force ? .force : .manual
         await MainActor.run {
-            showEnrichLoading = true
+            isEnriching = true
+            enrichResults = buildLoadingResults()
+            showEnrichResult = true
+            enrichInfoMessage = buildLastSyncText(for: song)
         }
 
         await MetadataEnrichmentService.shared.enrich(
@@ -446,9 +492,12 @@ struct NowPlayingView: View {
         let results = buildResultResults(before: before, after: updated)
         await MainActor.run {
             enrichResults = results
-            showEnrichLoading = false
             showEnrichResult = true
-            showForceAction = false
+            showForceAction = true
+            isEnriching = false
+            if let updated = updated {
+                enrichInfoMessage = buildLastSyncText(for: updated)
+            }
         }
     }
 
@@ -464,7 +513,7 @@ struct NowPlayingView: View {
 
     private func buildResultResults(before: SongSnapshot, after: Song?) -> [EnrichResultRow] {
         guard let after = after else {
-            return [EnrichResultRow(title: "同步", status: "未获取")]
+            return [EnrichResultRow(title: "同步", status: "同步失败", source: nil)]
         }
 
         let titleStatus = fieldStatus(before: before.title, after: after.title, isUnknown: isUnknownText(after.title))
@@ -473,41 +522,54 @@ struct NowPlayingView: View {
         let artworkStatus = artworkResult(before: before.hasArtwork, after: after.artworkData != nil)
         let lyricsStatus = lyricsResult(before: before.lyricsPath, after: after.lyricsPath)
 
-        let metaSource = after.metadataSource ?? "未知"
-        let lyricsSource = after.lyricsSource ?? "未知"
-        let metaTime = after.lastEnrichedAt.map(formatDate) ?? "未知"
-        let lyricsTime = after.lastLyricsFetchedAt.map(formatDate) ?? "未知"
+        let metaSource = after.metadataSource
+        let lyricsSource = after.lyricsSource
 
         return [
-            EnrichResultRow(title: "标题", status: titleStatus),
-            EnrichResultRow(title: "歌手", status: artistStatus),
-            EnrichResultRow(title: "专辑", status: albumStatus),
-            EnrichResultRow(title: "封面", status: artworkStatus),
-            EnrichResultRow(title: "歌词", status: lyricsStatus),
-            EnrichResultRow(title: "元数据来源", status: metaSource),
-            EnrichResultRow(title: "歌词来源", status: lyricsSource),
-            EnrichResultRow(title: "元数据更新时间", status: metaTime),
-            EnrichResultRow(title: "歌词更新时间", status: lyricsTime)
+            EnrichResultRow(title: "歌名", status: titleStatus, source: metaSource),
+            EnrichResultRow(title: "歌手", status: artistStatus, source: metaSource),
+            EnrichResultRow(title: "专辑", status: albumStatus, source: metaSource),
+            EnrichResultRow(title: "封面", status: artworkStatus, source: metaSource),
+            EnrichResultRow(title: "歌词", status: lyricsStatus, source: lyricsSource)
+        ]
+    }
+
+    private func buildLoadingResults() -> [EnrichResultRow] {
+        [
+            EnrichResultRow(title: "歌名", status: "同步中", source: nil),
+            EnrichResultRow(title: "歌手", status: "同步中", source: nil),
+            EnrichResultRow(title: "专辑", status: "同步中", source: nil),
+            EnrichResultRow(title: "封面", status: "同步中", source: nil),
+            EnrichResultRow(title: "歌词", status: "同步中", source: nil)
         ]
     }
 
     private func fieldStatus(before: String, after: String, isUnknown: Bool) -> String {
-        if before == after {
-            return isUnknown ? "未获取" : "已存在"
+        let beforeMissing = isUnknownText(before)
+        let afterMissing = isUnknown
+        if afterMissing {
+            return beforeMissing ? "同步失败" : "已同步"
         }
-        return "已更新"
+        if before == after {
+            return beforeMissing ? "同步失败" : "已同步"
+        }
+        return "同步成功"
     }
 
     private func artworkResult(before: Bool, after: Bool) -> String {
-        if before && after { return "已存在" }
-        if !before && after { return "获取成功" }
-        return "未获取"
+        if after {
+            return before ? "已同步" : "同步成功"
+        }
+        return before ? "已同步" : "同步失败"
     }
 
     private func lyricsResult(before: String?, after: String?) -> String {
-        if before != nil && after != nil { return "已存在" }
-        if before == nil && after != nil { return "获取成功" }
-        return "未获取"
+        let hadBefore = before != nil
+        let hasAfter = after != nil
+        if hasAfter {
+            return hadBefore ? "已同步" : "同步成功"
+        }
+        return hadBefore ? "已同步" : "同步失败"
     }
 
     private func isUnknownText(_ value: String) -> Bool {
@@ -519,6 +581,22 @@ struct NowPlayingView: View {
             normalized == "未知" ||
             normalized == "未知艺术家" ||
             normalized == "未知专辑"
+    }
+
+    private func triggerAutoLyricsFetchIfNeeded(song: Song) {
+        if song.lyricsPath == nil {
+            print("[NowPlaying] triggerAutoLyricsFetchIfNeeded - no lyrics path, will fetch for: \(song.title)")
+            let repo = SongRepository(modelContext: modelContext)
+            Task {
+                await LyricsEnrichmentService.shared.enrich(
+                    songID: song.id,
+                    repository: repo,
+                    reason: .playback
+                )
+            }
+        } else {
+            print("[NowPlaying] triggerAutoLyricsFetchIfNeeded - already has lyrics path: \(song.lyricsPath ?? "")")
+        }
     }
 }
 
@@ -540,101 +618,127 @@ private struct EnrichResultRow: Identifiable {
     let id = UUID()
     let title: String
     let status: String
+    let source: String?
 }
 
 private struct EnrichResultSheet: View {
     let results: [EnrichResultRow]
+    let lastSyncText: String
+    let showForceAction: Bool
+    let isEnriching: Bool
+    let onForce: () -> Void
+    let onHeightChange: (CGFloat) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            List {
+        List {
+            if !lastSyncText.isEmpty {
+                Section {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundColor(.accentColor)
+                            .font(.body)
+                        Text(lastSyncText)
+                            .font(.body)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if showForceAction {
+                            Button {
+                                onForce()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.body)
+                                    .rotationEffect(.degrees(isEnriching ? 360 : 0))
+                                    .animation(
+                                        .linear(duration: 1).repeatForever(autoreverses: false),
+                                        value: isEnriching
+                                    )
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .buttonBorderShape(.capsule)
+                            .disabled(isEnriching)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 4, trailing: 16))
+            }
+
+            Section {
                 ForEach(results) { row in
                     HStack {
                         Text(row.title)
                         Spacer()
-                        Text(row.status)
-                            .foregroundColor(color(for: row.status))
+                        HStack(spacing: 6) {
+                            statusPill(text: row.status, status: row.status)
+                            if let source = row.source, row.status != "同步中" {
+                                sourcePill(text: source)
+                            }
+                        }
                     }
                 }
             }
-            .listStyle(.insetGrouped)
-            .navigationTitle("同步结果")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") { dismiss() }
-                }
+        }
+        .listStyle(.plain)
+        .listSectionSpacing(0)
+        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: EnrichSheetHeightKey.self, value: proxy.size.height)
             }
+        )
+        .onPreferenceChange(EnrichSheetHeightKey.self) { height in
+            onHeightChange(height)
         }
     }
 
     private func color(for status: String) -> Color {
         switch status {
-        case "已更新", "获取成功":
+        case "同步成功":
             return .green
-        case "已存在":
-            return .secondary
+        case "已同步":
+            return .blue
+        case "同步中":
+            return .accentColor
         default:
             return .orange
         }
     }
-}
 
-private struct EnrichInfoSheet: View {
-    let lastSyncText: String
-    let showForceAction: Bool
-    let onForce: () -> Void
-    @Environment(\.dismiss) private var dismiss
+    private func statusPill(text: String, status: String) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .foregroundColor(color(for: status))
+            .background(
+                Capsule()
+                    .fill(color(for: status).opacity(0.15))
+            )
+    }
 
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.accentColor)
-                Text("已同步")
-                    .font(.headline)
-                Text(lastSyncText)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
-
-                HStack(spacing: 12) {
-                    if showForceAction {
-                        Button("强制刷新") {
-                            onForce()
-                            dismiss()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    Button("知道了") { dismiss() }
-                        .buttonStyle(.bordered)
-                }
-            }
-            .padding(.vertical, 24)
-            .navigationTitle("同步信息")
-            .navigationBarTitleDisplayMode(.inline)
-        }
+    private func sourcePill(text: String) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .foregroundColor(.secondary)
+            .background(
+                Capsule()
+                    .fill(Color.secondary.opacity(0.12))
+            )
     }
 }
 
-private struct EnrichLoadingSheet: View {
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 16) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                Text("正在同步…")
-                    .font(.headline)
-                Text("请稍候，正在获取封面、信息与歌词")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.vertical, 24)
-            .navigationTitle("同步中")
-            .navigationBarTitleDisplayMode(.inline)
+private struct EnrichSheetHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
         }
     }
 }

@@ -1,5 +1,7 @@
 import SwiftUI
 import SwiftData
+import PhotosUI
+import UniformTypeIdentifiers
 
 struct LibraryView: View {
     @Environment(\.modelContext) private var modelContext
@@ -137,10 +139,22 @@ struct LibraryView: View {
                                        songs: viewModel.songsForAlbum(albumInfo.album))
                     } label: {
                         HStack {
-                            Image(systemName: "square.stack")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                                .frame(width: 44, height: 44)
+                            if let data = viewModel.artworkForAlbum(albumInfo.album),
+                               let uiImage = UIImage(data: data) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                            } else {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(width: 44, height: 44)
+                                    .overlay(
+                                        Image(systemName: "square.stack")
+                                            .foregroundColor(.gray)
+                                    )
+                            }
                             VStack(alignment: .leading) {
                                 Text(albumInfo.album)
                                     .font(.body)
@@ -165,15 +179,34 @@ struct LibraryView: View {
             } else {
                 List(viewModel.artists, id: \.self) { artist in
                     NavigationLink {
-                        ArtistDetailView(artist: artist, songs: viewModel.songsForArtist(artist))
+                        ArtistDetailView(
+                            artist: artist,
+                            songs: viewModel.songsForArtist(artist),
+                            viewModel: viewModel
+                        )
                     } label: {
                         HStack {
-                            Image(systemName: "person.circle")
-                                .font(.title2)
-                                .foregroundColor(.secondary)
-                                .frame(width: 44, height: 44)
+                            if let data = viewModel.artworkForArtist(artist),
+                               let uiImage = UIImage(data: data) {
+                                Image(uiImage: uiImage)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 44, height: 44)
+                                    .clipShape(Circle())
+                            } else {
+                                Circle()
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(width: 44, height: 44)
+                                    .overlay(
+                                        Image(systemName: "person.circle")
+                                            .foregroundColor(.gray)
+                                    )
+                            }
                             Text(artist)
                         }
+                    }
+                    .onAppear {
+                        viewModel.loadArtistArtworkIfNeeded(artist)
                     }
                 }
                 .listStyle(.plain)
@@ -442,6 +475,7 @@ struct AlbumDetailView: View {
     @Environment(PlaybackService.self) private var playbackService
     @Environment(\.modelContext) private var modelContext
     @State private var displayedSongs: [Song]
+    private let headerHeight: CGFloat = 280
 
     init(album: String, artist: String, songs: [Song]) {
         self.album = album
@@ -452,6 +486,25 @@ struct AlbumDetailView: View {
 
     var body: some View {
         List {
+            Section {
+                ZStack(alignment: .bottomLeading) {
+                    albumHeaderImage
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(album)
+                            .font(.title2)
+                            .bold()
+                            .foregroundColor(.white)
+                            .shadow(radius: 2)
+                        Text(artist)
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.9))
+                            .shadow(radius: 2)
+                    }
+                    .padding(16)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+            }
             Button {
                 playbackService.play(songs: displayedSongs)
             } label: {
@@ -493,6 +546,39 @@ struct AlbumDetailView: View {
         }
         .listStyle(.plain)
         .navigationTitle(album)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var albumHeaderImage: some View {
+        let data = displayedSongs.compactMap(\.artworkData).max { $0.count < $1.count }
+        if let data, let uiImage = UIImage(data: data) {
+            return AnyView(
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(height: headerHeight)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .overlay(
+                        LinearGradient(
+                            gradient: Gradient(colors: [Color.black.opacity(0.6), Color.clear]),
+                            startPoint: .bottom,
+                            endPoint: .center
+                        )
+                    )
+            )
+        }
+
+        return AnyView(
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(height: headerHeight)
+                .overlay(
+                    Image(systemName: "square.stack")
+                        .font(.largeTitle)
+                        .foregroundColor(.gray)
+                )
+        )
     }
 
     private func deleteSong(_ song: Song) {
@@ -511,59 +597,256 @@ struct AlbumDetailView: View {
 struct ArtistDetailView: View {
     let artist: String
     let songs: [Song]
+    @Bindable var viewModel: LibraryViewModel
     @Environment(PlaybackService.self) private var playbackService
     @Environment(\.modelContext) private var modelContext
     @State private var displayedSongs: [Song]
+    private let headerHeight: CGFloat = 280
+    @State private var showAvatarActions = false
+    @State private var showAvatarDrawer = false
+    @State private var showFilePicker = false
+    @State private var showPhotoPicker = false
+    @State private var pickedPhotoItem: PhotosPickerItem?
+    @State private var candidates: [ArtistAvatarCandidate] = []
+    @State private var isLoadingCandidates = false
+    @State private var selectedCandidate: ArtistAvatarCandidate?
+    @State private var showSaveError = false
 
-    init(artist: String, songs: [Song]) {
+    init(artist: String, songs: [Song], viewModel: LibraryViewModel) {
         self.artist = artist
         self.songs = songs
+        self._viewModel = Bindable(wrappedValue: viewModel)
         _displayedSongs = State(initialValue: songs)
     }
 
     var body: some View {
-        List {
-            Button {
-                playbackService.play(songs: displayedSongs)
-            } label: {
-                Label("播放全部", systemImage: "play.fill")
-                    .foregroundColor(.accentColor)
-            }
-            ForEach(displayedSongs, id: \.id) { song in
-                SongRow(
-                            song: song,
-                            onTap: {
-                                playbackService.showNowPlaying = true
-                                playbackService.enqueueAndPlay(song)
-                            },
-                            onDoubleTap: {
-                                playbackService.showNowPlaying = true
-                                playbackService.play(
-                                    songs: displayedSongs,
-                                    startIndex: displayedSongs.firstIndex(where: { $0.id == song.id }) ?? 0
+        ScrollViewReader { proxy in
+            List {
+                Section {
+                    ZStack(alignment: .bottomLeading) {
+                        artistHeaderImage
+                        Text(artist)
+                            .font(.title2)
+                            .bold()
+                            .foregroundColor(.white)
+                            .shadow(radius: 2)
+                            .padding(16)
+                    }
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                }
+                .id("artist-top")
+                Button {
+                    playbackService.play(songs: displayedSongs)
+                } label: {
+                    Label("播放全部", systemImage: "play.fill")
+                        .foregroundColor(.accentColor)
+                }
+                if isLoadingCandidates {
+                    HStack {
+                        Spacer()
+                        ProgressView()
+                        Spacer()
+                    }
+                    .listRowSeparator(.hidden)
+                }
+                if !candidates.isEmpty {
+                    Section("候选头像") {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+                            ForEach(candidates) { candidate in
+                                AsyncImage(url: candidate.thumbnailURL) { image in
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Color.gray.opacity(0.2)
+                                }
+                                .frame(height: 140)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(
+                                            selectedCandidate?.id == candidate.id ? Color.accentColor : Color.clear,
+                                            lineWidth: 2
+                                        )
                                 )
+                                .onTapGesture {
+                                    selectedCandidate = candidate
+                                }
                             }
-                        )
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        deleteSong(song)
-                    } label: {
-                        Label("删除", systemImage: "trash")
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .listRowSeparator(.hidden)
+                }
+                ForEach(displayedSongs, id: \.id) { song in
+                    SongRow(
+                                song: song,
+                                onTap: {
+                                    playbackService.showNowPlaying = true
+                                    playbackService.enqueueAndPlay(song)
+                                },
+                                onDoubleTap: {
+                                    playbackService.showNowPlaying = true
+                                    playbackService.play(
+                                        songs: displayedSongs,
+                                        startIndex: displayedSongs.firstIndex(where: { $0.id == song.id }) ?? 0
+                                    )
+                                }
+                            )
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            deleteSong(song)
+                        } label: {
+                            Label("删除", systemImage: "trash")
+                        }
+                    }
+                    .swipeActions(edge: .leading) {
+                        Button {
+                            toggleFavorite(song)
+                        } label: {
+                            Label(song.isFavorite ? "取消收藏" : "收藏",
+                                  systemImage: song.isFavorite ? "heart.slash" : "heart")
+                        }
+                        .tint(song.isFavorite ? .gray : .red)
                     }
                 }
-                .swipeActions(edge: .leading) {
-                    Button {
-                        toggleFavorite(song)
-                    } label: {
-                        Label(song.isFavorite ? "取消收藏" : "收藏",
-                              systemImage: song.isFavorite ? "heart.slash" : "heart")
+            }
+            .listStyle(.plain)
+            .navigationTitle(artist)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("头像") { showAvatarDrawer = true }
+                }
+                if !candidates.isEmpty {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("取消") {
+                            candidates = []
+                            selectedCandidate = nil
+                        }
                     }
-                    .tint(song.isFavorite ? .gray : .red)
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("保存") {
+                            guard let candidate = selectedCandidate else { return }
+                            Task {
+                                let saved = await viewModel.applyCandidateAvatar(artist: artist, candidate: candidate)
+                                await MainActor.run {
+                                    if saved {
+                                        print("[ArtistAvatar] UI saved candidate=\(candidate.id) for artist=\(artist)")
+                                        candidates = []
+                                        selectedCandidate = nil
+                                        proxy.scrollTo("artist-top", anchor: .top)
+                                    } else {
+                                        print("[ArtistAvatar] UI save failed for artist=\(artist)")
+                                        showSaveError = true
+                                    }
+                                }
+                            }
+                        }
+                        .disabled(selectedCandidate == nil)
+                    }
+                }
+            }
+            .sheet(isPresented: $showAvatarDrawer) {
+                AvatarActionSheet(
+                    artist: artist,
+                    isLocked: viewModel.isLockedAvatar(artist) || viewModel.isManualAvatar(artist),
+                    onFetchMore: {
+                        isLoadingCandidates = true
+                        Task {
+                            let result = await viewModel.fetchAvatarCandidates(artist: artist, limit: 100)
+                            await MainActor.run {
+                                print("[ArtistAvatar] UI got candidates=\(result.count) for artist=\(artist)")
+                                candidates = result
+                                selectedCandidate = nil
+                                isLoadingCandidates = false
+                                showAvatarDrawer = false
+                            }
+                        }
+                    },
+                    onPickPhoto: {
+                        showAvatarDrawer = false
+                        showPhotoPicker = true
+                    },
+                    onPickFile: {
+                        showAvatarDrawer = false
+                        showFilePicker = true
+                    },
+                    onRestoreAuto: {
+                        Task { await viewModel.restoreAutoAvatar(artist: artist) }
+                        showAvatarDrawer = false
+                    }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+            .photosPicker(isPresented: $showPhotoPicker, selection: $pickedPhotoItem, matching: .images)
+            .alert("保存失败", isPresented: $showSaveError) {
+                Button("知道了", role: .cancel) {}
+            } message: {
+                Text("头像下载或保存失败，请稍后重试。")
+            }
+            .onChange(of: pickedPhotoItem) { _, newItem in
+                guard let newItem else { return }
+                Task {
+                    if let data = try? await newItem.loadTransferable(type: Data.self) {
+                        await MainActor.run {
+                            viewModel.setManualAvatar(artist: artist, data: data)
+                            candidates = []
+                            selectedCandidate = nil
+                            proxy.scrollTo("artist-top", anchor: .top)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showFilePicker) {
+                ImageDocumentPicker { urls in
+                    guard let url = urls.first else { return }
+                    let hasAccess = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if hasAccess { url.stopAccessingSecurityScopedResource() }
+                    }
+                    if let data = try? Data(contentsOf: url) {
+                        viewModel.setManualAvatar(artist: artist, data: data)
+                        candidates = []
+                        selectedCandidate = nil
+                        proxy.scrollTo("artist-top", anchor: .top)
+                    }
                 }
             }
         }
-        .listStyle(.plain)
-        .navigationTitle(artist)
+    }
+
+    private var artistHeaderImage: some View {
+        let data = viewModel.artworkForArtist(artist)
+        if let data, let uiImage = UIImage(data: data) {
+            return AnyView(
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: headerHeight)
+                    .background(Color.black.opacity(0.05))
+                    .overlay(
+                        LinearGradient(
+                            gradient: Gradient(colors: [Color.black.opacity(0.6), Color.clear]),
+                            startPoint: .bottom,
+                            endPoint: .center
+                        )
+                    )
+            )
+        }
+
+        return AnyView(
+            Rectangle()
+                .fill(Color.gray.opacity(0.2))
+                .frame(height: headerHeight)
+                .overlay(
+                    Image(systemName: "person.circle")
+                        .font(.largeTitle)
+                        .foregroundColor(.gray)
+                )
+        )
     }
 
     private func deleteSong(_ song: Song) {
@@ -576,6 +859,93 @@ struct ArtistDetailView: View {
     private func toggleFavorite(_ song: Song) {
         let repo = SongRepository(modelContext: modelContext)
         repo.toggleFavorite(song)
+    }
+}
+
+private struct ImageDocumentPicker: UIViewControllerRepresentable {
+    let onPick: ([URL]) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.image], asCopy: true)
+        picker.allowsMultipleSelection = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick)
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: ([URL]) -> Void
+
+        init(onPick: @escaping ([URL]) -> Void) {
+            self.onPick = onPick
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls)
+        }
+    }
+}
+
+private struct AvatarActionSheet: View {
+    let artist: String
+    let isLocked: Bool
+    let onFetchMore: () -> Void
+    let onPickPhoto: () -> Void
+    let onPickFile: () -> Void
+    let onRestoreAuto: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Capsule()
+                .fill(Color.secondary.opacity(0.3))
+                .frame(width: 36, height: 5)
+                .padding(.top, 8)
+
+            VStack(spacing: 4) {
+                Text("头像设置")
+                    .font(.headline)
+                Text(artist)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+            VStack(spacing: 12) {
+                Button(action: onFetchMore) {
+                    Label("获取更多头像", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(action: onPickPhoto) {
+                    Label("从相册选择", systemImage: "photo")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                Button(action: onPickFile) {
+                    Label("从文件选择", systemImage: "doc")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
+                if isLocked {
+                    Button(role: .destructive, action: onRestoreAuto) {
+                        Label("恢复自动", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+            .padding(.horizontal)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 16)
     }
 }
 
